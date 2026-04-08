@@ -89,7 +89,9 @@
   "editor.fontLigatures": true,
   "editor.renderWhitespace": "selection",
   "editor.linkedEditing": true,
-  "editor.rulers": [100],
+  "editor.rulers": [
+    100
+  ],
   "security.workspace.trust.enabled": true,
   "security.workspace.trust.untrustedFiles": "open",
   "git.autofetch": true,
