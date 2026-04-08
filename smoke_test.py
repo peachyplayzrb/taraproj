@@ -1,4 +1,4 @@
-"""Minimal local Flask smoke test for BL-019.
+"""Minimal local Flask smoke test for BL-019/BL-012 checks.
 
 Checks:
 1) GET / returns 200 and HTML.
@@ -6,6 +6,8 @@ Checks:
 3) POST /click persists and updates click_store.pkl mtime.
 4) Duplicate click_event_id returns deduplicated status.
 5) Invalid doc_id returns 400 invalid_doc_id.
+6) Query normalisation remains order-insensitive (parity safeguard).
+7) Newest/oldest/popularity sorts remain relevance-threshold gated.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ import time
 import uuid
 from typing import Any
 
-from app import BASE, _REQUIRED_FIELDS, app
+from app import BASE, _RELEVANCE_THRESHOLD, _REQUIRED_FIELDS, _normalise_query, app
 
 
 def _fail(msg: str) -> None:
@@ -53,6 +55,12 @@ def run() -> int:
         _assert(os.path.exists(click_store_path), "click_store.pkl does not exist")
 
         with app.test_client() as client:
+            # BL-012 parity safeguard: normalisation should be order-insensitive.
+            _assert(
+                _normalise_query("deep learning") == _normalise_query("learning deep"),
+                "Query normalisation parity failed for token order variation",
+            )
+
             # 1) GET /
             root_resp = client.get("/")
             _expect_status(root_resp, 200, "GET /")
@@ -115,6 +123,26 @@ def run() -> int:
                 f"POST /click invalid doc_id status was {bad_json}",
             )
 
+            # 6) Sort modes should still enforce relevance threshold gating.
+            for sort_mode in ("newest", "oldest", "popularity"):
+                sort_resp = client.get(
+                    "/search",
+                    query_string={"q": query, "sort": sort_mode, "k": 5},
+                )
+                _expect_status(sort_resp, 200, f"GET /search sort={sort_mode}")
+                sort_results = sort_resp.get_json() or []
+                _assert(isinstance(sort_results, list), f"sort={sort_mode} did not return list")
+                _assert(len(sort_results) > 0, f"sort={sort_mode} returned no results")
+
+                top_cosine = float(sort_results[0]["cosine_score"])
+                _assert(
+                    top_cosine > _RELEVANCE_THRESHOLD,
+                    (
+                        f"sort={sort_mode} top result cosine_score={top_cosine} "
+                        f"did not clear threshold={_RELEVANCE_THRESHOLD}"
+                    ),
+                )
+
     except Exception as exc:  # noqa: BLE001 - smoke test should report any failure
         failures.append(str(exc))
 
@@ -130,6 +158,8 @@ def run() -> int:
     print("- POST /click valid returned ok and updated click_store.pkl mtime")
     print("- POST /click duplicate returned deduplicated")
     print("- POST /click invalid doc_id returned 400 invalid_doc_id")
+    print("- Query normalisation remained order-insensitive")
+    print("- Newest/oldest/popularity respected relevance threshold gating")
     return 0
 
 

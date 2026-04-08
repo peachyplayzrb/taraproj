@@ -116,6 +116,11 @@ def _load_index() -> tuple:
         click_store       — dict[query_key → dict[doc_id → click_count]]
         doc_years         — list of int publication years
         global_clicks     — dict[doc_id → total clicks across all queries]
+
+    Note:
+        Runtime artifacts currently do not include document-author fields.
+        Therefore author-specific keyword boosting is intentionally not applied
+        in runtime ranking (documented BL-012 limitation).
     """
     # --- Core index artifacts ---
     with open(f'{BASE}/vectorizer.pkl',        'rb') as f: vectorizer        = pickle.load(f)
@@ -274,6 +279,11 @@ def search(query: str, top_k: int = 10, sort_by: str = 'blended') -> list:
                    'popularity' global click count (relevant docs only)
                    'newest'     publication year descending (relevant docs only)
                    'oldest'     publication year ascending (relevant docs only)
+
+    BL-012 limitation:
+        Author metadata is not present in current runtime artifacts, so the
+        optional author-keyword 1.5x boost remains unavailable in this runtime.
+        Ranking formulas are intentionally unchanged to preserve compatibility.
 
     Returns:
         List of result dicts each containing all _REQUIRED_FIELDS keys.
