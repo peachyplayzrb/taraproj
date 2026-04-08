@@ -67,6 +67,26 @@
       outline: none;
     }
 
+    .search-bar .multi-select {
+      min-width: 150px;
+      height: 90px;
+      padding: 8px;
+    }
+
+    .toggle-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: #e9ebff;
+      font-size: 0.85rem;
+      padding: 0 6px;
+    }
+
+    .toggle-wrap input {
+      accent-color: #4f6ef7;
+      cursor: pointer;
+    }
+
     .search-bar button {
       padding: 11px 22px;
       background: #4f6ef7;
@@ -309,6 +329,21 @@
       <option value="20">20 results</option>
     </select>
 
+    <select id="category" class="multi-select" multiple onchange="onCategoryChange()" title="Filter by one or more categories">
+      <option value="cs.AI">cs.AI</option>
+      <option value="cs.CL">cs.CL</option>
+      <option value="cs.CV">cs.CV</option>
+      <option value="cs.IR">cs.IR</option>
+      <option value="cs.LG">cs.LG</option>
+      <option value="cs.NE">cs.NE</option>
+      <option value="cs.RO">cs.RO</option>
+    </select>
+
+    <label class="toggle-wrap" title="Enable conservative WordNet query expansion">
+      <input type="checkbox" id="expand" onchange="onExpandChange()" />
+      WordNet expand
+    </label>
+
     <button onclick="runSearch()">Search</button>
   </div>
 
@@ -353,6 +388,14 @@
       if (currentQuery) runSearch();
     }
 
+    function onCategoryChange() {
+      if (currentQuery) runSearch();
+    }
+
+    function onExpandChange() {
+      if (currentQuery) runSearch();
+    }
+
     function updateLegend() {
       const sort = document.getElementById('sort').value;
       const legend = document.getElementById('sort-legend');
@@ -365,6 +408,9 @@
       const query = document.getElementById('query').value.trim();
       const sort = document.getElementById('sort').value;
       const topk = document.getElementById('topk').value;
+      const expand = document.getElementById('expand').checked ? '1' : '0';
+      const categorySelect = document.getElementById('category');
+      const selectedCategories = Array.from(categorySelect.selectedOptions).map(opt => opt.value);
       if (!query) return;
 
       currentQuery = query;
@@ -373,7 +419,10 @@
       document.getElementById('status').textContent = '';
       updateLegend();
 
-      const res = await fetch('/search?q=' + encodeURIComponent(query) + '&sort=' + sort + '&k=' + topk);
+      const params = new URLSearchParams({ q: query, sort: sort, k: topk, expand: expand });
+      selectedCategories.forEach(function (cat) { params.append('cat', cat); });
+
+      const res = await fetch('/search?' + params.toString());
       const data = await res.json();
 
       document.getElementById('loading').style.display = 'none';

@@ -24,7 +24,7 @@ import os
 import threading
 import warnings
 import nltk
-from nltk.corpus import stopwords
+from nltk.corpus import stopwords, wordnet
 from nltk.tokenize import word_tokenize
 from nltk.stem import PorterStemmer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -115,6 +115,7 @@ def _load_index() -> tuple:
         tfidf_pos_matrix  — POS-weighted TF-IDF matrix (used for ranking)
         click_store       — dict[query_key → dict[doc_id → click_count]]
         doc_years         — list of int publication years
+        doc_categories    — list of category strings aligned to rows (optional)
         global_clicks     — dict[doc_id → total clicks across all queries]
 
     Note:
@@ -145,18 +146,38 @@ def _load_index() -> tuple:
     except Exception:
         click_store = defaultdict(lambda: defaultdict(int))
 
-    # --- Publication year extraction ---
-    # arXiv IDs encode the submission year as the first two digits of the
-    # integer part (YYMM format). Values < 50 are treated as 20YY, >= 50
-    # as 19YY. Malformed IDs default to 0.
-    doc_years = []
-    for doc_id in doc_ids:
-        try:
-            prefix = str(doc_id).split('.')[0].zfill(4)
-            yy     = int(prefix[:2])
-            doc_years.append(2000 + yy if yy < 50 else 1900 + yy)
-        except (ValueError, IndexError):
-            doc_years.append(0)
+    # --- Publication years and categories ---
+    # Prefer explicit serialized metadata when available; fall back to
+    # deterministic derivation (for years) or disabled filtering (categories).
+    try:
+        with open(f'{BASE}/doc_years.pkl', 'rb') as f:
+            doc_years = [int(y) for y in pickle.load(f)]
+        if len(doc_years) != len(doc_ids):
+            print('WARNING: doc_years length mismatch — deriving years from IDs')
+            doc_years = []
+    except FileNotFoundError:
+        doc_years = []
+
+    if not doc_years:
+        # arXiv IDs encode the submission year as the first two digits of the
+        # integer part (YYMM format). Values < 50 are treated as 20YY, >= 50
+        # as 19YY. Malformed IDs default to 0.
+        for doc_id in doc_ids:
+            try:
+                prefix = str(doc_id).split('.')[0].zfill(4)
+                yy     = int(prefix[:2])
+                doc_years.append(2000 + yy if yy < 50 else 1900 + yy)
+            except (ValueError, IndexError):
+                doc_years.append(0)
+
+    try:
+        with open(f'{BASE}/doc_categories.pkl', 'rb') as f:
+            doc_categories = [str(v) for v in pickle.load(f)]
+        if len(doc_categories) != len(doc_ids):
+            print('WARNING: doc_categories length mismatch — category filter disabled')
+            doc_categories = None
+    except FileNotFoundError:
+        doc_categories = None
 
     # --- Global click popularity ---
     # Aggregate click counts across all queries so we can rank by overall
@@ -186,7 +207,7 @@ def _load_index() -> tuple:
 
     return (vectorizer, pos_weight_diag, doc_ids, doc_titles,
             doc_abstracts, tfidf_matrix, tfidf_pos_matrix,
-            click_store, doc_years, global_clicks,
+            click_store, doc_years, doc_categories, global_clicks,
             doc_authors, doc_author_tokens)
 
 
@@ -194,12 +215,15 @@ def _load_index() -> tuple:
 print("Loading index...")
 (vectorizer, pos_weight_diag, doc_ids, doc_titles,
  doc_abstracts, tfidf_matrix, tfidf_pos_matrix,
- click_store, doc_years, global_clicks,
+ click_store, doc_years, doc_categories, global_clicks,
  doc_authors, doc_author_tokens) = _load_index()
 
 stop_words = set(stopwords.words('english'))
 stemmer    = PorterStemmer()
 print(f"Index loaded — {len(doc_ids)} documents ready")
+
+# Cache conservative WordNet expansions by token to avoid repeated lookups.
+_WORDNET_CACHE: dict[str, list[str]] = {}
 
 
 # =============================================================================
@@ -208,7 +232,48 @@ print(f"Index loaded — {len(doc_ids)} documents ready")
 # This pipeline MUST match the preprocessing applied to documents during
 # notebook indexing. Any divergence will cause incorrect cosine scores.
 
-def _preprocess(text: str) -> str:
+def _expand_query_with_wordnet(tokens: list[str], stemmed_tokens: list[str]) -> list[str]:
+    """Expand query tokens conservatively using WordNet synonyms.
+
+    Rules:
+        - Original stemmed tokens are always retained.
+        - At most the first two synsets and first two lemmas are considered.
+        - Multi-word lemmas are split, stemmed, and appended uniquely.
+        - If WordNet data is unavailable, expansion is silently skipped.
+    """
+    expanded = list(stemmed_tokens)
+    seen = set(expanded)
+
+    for tok in tokens:
+        if tok in _WORDNET_CACHE:
+            extra_stems = _WORDNET_CACHE[tok]
+        else:
+            try:
+                synsets = wordnet.synsets(tok)[:2]
+            except LookupError:
+                return expanded
+
+            extra_stems = []
+            for syn in synsets:
+                for lemma in syn.lemmas()[:2]:
+                    lemma_name = lemma.name().lower().replace('_', ' ').strip()
+                    if not lemma_name:
+                        continue
+                    for part in lemma_name.split():
+                        stemmed = stemmer.stem(part)
+                        if stemmed and stemmed not in extra_stems:
+                            extra_stems.append(stemmed)
+            _WORDNET_CACHE[tok] = extra_stems
+
+        for candidate in extra_stems:
+            if candidate not in seen:
+                expanded.append(candidate)
+                seen.add(candidate)
+
+    return expanded
+
+
+def _preprocess(text: str, expand_terms: bool = False) -> str:
     """Apply the full indexing preprocessing pipeline to a text string.
 
     Steps:
@@ -224,8 +289,26 @@ def _preprocess(text: str) -> str:
     text   = re.sub(r'\d+', '', text)          # remove digits
     tokens = word_tokenize(text)
     tokens = [t for t in tokens if t not in stop_words and t.strip()]
-    tokens = [stemmer.stem(t) for t in tokens]
-    return ' '.join(tokens)
+    stemmed_tokens = [stemmer.stem(t) for t in tokens]
+
+    if expand_terms:
+        stemmed_tokens = _expand_query_with_wordnet(tokens, stemmed_tokens)
+
+    return ' '.join(stemmed_tokens)
+
+
+def _normalise_categories(raw_categories: list[str] | None) -> list[str]:
+    """Normalise category filter values to lowercase tokens for contains-match."""
+    if not raw_categories:
+        return []
+
+    out: list[str] = []
+    for value in raw_categories:
+        for piece in str(value).split(','):
+            token = piece.strip().lower()
+            if token and token not in out:
+                out.append(token)
+    return out
 
 
 def _normalise_query(query: str) -> str:
@@ -284,7 +367,13 @@ ALPHA = 0.7
 _RELEVANCE_THRESHOLD = 0.05
 
 
-def search(query: str, top_k: int = 10, sort_by: str = 'blended') -> list:
+def search(
+    query: str,
+    top_k: int = 10,
+    sort_by: str = 'blended',
+    categories: list[str] | None = None,
+    expand_terms: bool = False,
+) -> list:
     """Run a search query and return a ranked list of results.
 
     Args:
@@ -310,7 +399,7 @@ def search(query: str, top_k: int = 10, sort_by: str = 'blended') -> list:
         ValueError: If a result dict is missing any required field.
     """
     # Step 1 — preprocess and vectorise the query
-    processed     = _preprocess(query)
+    processed     = _preprocess(query, expand_terms=expand_terms)
     query_vec     = vectorizer.transform([processed])
     query_vec_pos = query_vec.dot(pos_weight_diag)   # apply POS multipliers
 
@@ -349,8 +438,21 @@ def search(query: str, top_k: int = 10, sort_by: str = 'blended') -> list:
     else:  # 'blended' (default)
         scores = blended_scores
 
-    # Step 4 — rank and build result list
-    top_indices = scores.argsort()[::-1][:top_k]
+    # Step 4 — rank and optionally apply category filtering
+    ranked_indices = scores.argsort()[::-1]
+    category_tokens = _normalise_categories(categories)
+
+    if category_tokens and doc_categories is not None:
+        top_indices = []
+        for idx in ranked_indices:
+            category_value = str(doc_categories[idx]).lower()
+            if any(token in category_value for token in category_tokens):
+                top_indices.append(int(idx))
+            if len(top_indices) >= top_k:
+                break
+    else:
+        top_indices = ranked_indices[:top_k]
+
     q_key       = _normalise_query(query)
 
     results = []
@@ -410,12 +512,27 @@ def do_search():
     query   = request.args.get('q', '').strip()
     sort_by = request.args.get('sort', 'blended')
     top_k   = int(request.args.get('k', 10))
+    expand_terms = request.args.get('expand', '0').strip().lower() in ('1', 'true', 'yes', 'on')
+
+    categories = request.args.getlist('cat')
+    if not categories:
+        single_cat = request.args.get('cat', '').strip()
+        if single_cat:
+            categories = [single_cat]
 
     if not query:
         return jsonify([])
 
     try:
-        return jsonify(search(query, top_k=top_k, sort_by=sort_by))
+        return jsonify(
+            search(
+                query,
+                top_k=top_k,
+                sort_by=sort_by,
+                categories=categories,
+                expand_terms=expand_terms,
+            )
+        )
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 500
 

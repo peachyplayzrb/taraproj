@@ -18,7 +18,15 @@ import time
 import uuid
 from typing import Any
 
-from app import BASE, _RELEVANCE_THRESHOLD, _REQUIRED_FIELDS, _normalise_query, app, doc_ids
+from app import (
+    BASE,
+    _RELEVANCE_THRESHOLD,
+    _REQUIRED_FIELDS,
+    _normalise_query,
+    app,
+    doc_categories,
+    doc_ids,
+)
 
 
 def _fail(msg: str) -> None:
@@ -71,6 +79,8 @@ def run() -> int:
                 print(f"  [skip] {art} not present — author boost inactive until runbook is re-run")
 
         with app.test_client() as client:
+            doc_id_to_index = {str(v): i for i, v in enumerate(doc_ids)}
+
             # BL-012 parity safeguard: normalisation should be order-insensitive.
             _assert(
                 _normalise_query("deep learning") == _normalise_query("learning deep"),
@@ -159,6 +169,69 @@ def run() -> int:
                     ),
                 )
 
+            # 7) Expansion toggle should keep endpoint healthy in both modes.
+            expand_off = client.get(
+                "/search",
+                query_string={"q": query, "sort": "blended", "k": 5, "expand": "0"},
+            )
+            _expect_status(expand_off, 200, "GET /search expand=0")
+            _assert(isinstance(expand_off.get_json(), list), "expand=0 response is not list")
+
+            expand_on = client.get(
+                "/search",
+                query_string={"q": query, "sort": "blended", "k": 5, "expand": "1"},
+            )
+            _expect_status(expand_on, 200, "GET /search expand=1")
+            _assert(isinstance(expand_on.get_json(), list), "expand=1 response is not list")
+
+            # 8) Category filtering checks (when category artifact is present).
+            if doc_categories is not None:
+                category_tokens: list[str] = []
+                for raw in doc_categories:
+                    for token in str(raw).split("|"):
+                        token = token.strip()
+                        if token and token not in category_tokens:
+                            category_tokens.append(token)
+                    if len(category_tokens) >= 2:
+                        break
+
+                if category_tokens:
+                    cat1 = category_tokens[0]
+                    cat_resp = client.get(
+                        "/search",
+                        query_string={"q": query, "sort": "blended", "k": 5, "cat": cat1},
+                    )
+                    _expect_status(cat_resp, 200, "GET /search single cat")
+                    for row in cat_resp.get_json() or []:
+                        idx = doc_id_to_index.get(str(row["id"]))
+                        _assert(idx is not None, "single-cat result doc id missing from doc_ids")
+                        doc_cat = str(doc_categories[idx]).lower()
+                        _assert(cat1.lower() in doc_cat, f"single-cat filter mismatch for {row['id']}")
+
+                if len(category_tokens) >= 2:
+                    cat1, cat2 = category_tokens[0], category_tokens[1]
+                    multi_resp = client.get(
+                        "/search",
+                        query_string=[
+                            ("q", query),
+                            ("sort", "blended"),
+                            ("k", 5),
+                            ("cat", cat1),
+                            ("cat", cat2),
+                        ],
+                    )
+                    _expect_status(multi_resp, 200, "GET /search multi cat")
+                    for row in multi_resp.get_json() or []:
+                        idx = doc_id_to_index.get(str(row["id"]))
+                        _assert(idx is not None, "multi-cat result doc id missing from doc_ids")
+                        doc_cat = str(doc_categories[idx]).lower()
+                        _assert(
+                            (cat1.lower() in doc_cat) or (cat2.lower() in doc_cat),
+                            f"multi-cat filter mismatch for {row['id']}",
+                        )
+            else:
+                print("  [skip] doc_categories.pkl not present — category filter assertions skipped")
+
     except Exception as exc:  # noqa: BLE001 - smoke test should report any failure
         failures.append(str(exc))
 
@@ -176,6 +249,8 @@ def run() -> int:
     print("- POST /click invalid doc_id returned 400 invalid_doc_id")
     print("- Query normalisation remained order-insensitive")
     print("- Newest/oldest/popularity respected relevance threshold gating")
+    print("- Expansion toggle handled /search requests in both modes")
+    print("- Category filter behavior verified (or skipped if category artifact absent)")
     print("- Author artifact length alignment verified (or skipped if PKLs absent)")
     return 0
 
