@@ -18,7 +18,7 @@ import time
 import uuid
 from typing import Any
 
-from app import BASE, _RELEVANCE_THRESHOLD, _REQUIRED_FIELDS, _normalise_query, app
+from app import BASE, _RELEVANCE_THRESHOLD, _REQUIRED_FIELDS, _normalise_query, app, doc_ids
 
 
 def _fail(msg: str) -> None:
@@ -53,6 +53,22 @@ def run() -> int:
     try:
         click_store_path = os.path.join(BASE, "click_store.pkl")
         _assert(os.path.exists(click_store_path), "click_store.pkl does not exist")
+
+        # BL-012 soft check: if author artifacts exist, verify length alignment.
+        # Skipped (not a failure) when files are not yet present — Flask runtime
+        # falls back to no-boost behaviour in that case.
+        for art in ("doc_authors.pkl", "doc_author_tokens.pkl"):
+            art_path = os.path.join(BASE, art)
+            if os.path.exists(art_path):
+                import pickle as _pkl
+                with open(art_path, "rb") as _f:
+                    _art = _pkl.load(_f)
+                _assert(
+                    len(_art) == len(doc_ids),
+                    f"{art} length {len(_art)} does not match doc_ids length {len(doc_ids)}",
+                )
+            else:
+                print(f"  [skip] {art} not present — author boost inactive until runbook is re-run")
 
         with app.test_client() as client:
             # BL-012 parity safeguard: normalisation should be order-insensitive.
@@ -160,6 +176,7 @@ def run() -> int:
     print("- POST /click invalid doc_id returned 400 invalid_doc_id")
     print("- Query normalisation remained order-insensitive")
     print("- Newest/oldest/popularity respected relevance threshold gating")
+    print("- Author artifact length alignment verified (or skipped if PKLs absent)")
     return 0
 
 
