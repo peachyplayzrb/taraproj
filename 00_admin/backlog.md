@@ -1,0 +1,22 @@
+# Backlog
+
+Format
+- BL-### | Status | Priority | Task | Evidence/Notes
+
+Items
+- BL-001 | open | high | Keep runtime stable while using new control layer for future edits. | No runtime files changed in this setup pass.
+- BL-002 | open | medium | Use .github/prompts/auto-implement.prompt.md for next implementation handoff. | Confirms consistent task framing.
+- BL-003 | done | high | Run customization validator and fix any frontmatter/schema issues before first large handoff. | Script run passed: school_docs/files/validate_customization.py
+- BL-004 | open | medium | Smoke-test hook behavior for blocked commands and post-tool governance reminders. | Files: .github/hooks/hooks.json and .github/hooks/scripts/*
+- BL-005 | open | low | Run one monthly control-surface hygiene check (policy registration + agent/prompt linkage + validator). | Keep discoverability and governance logs in sync with canonical governance/runtime paths: 00_admin/backlog.md, 00_admin/combined findings.md, app.py, templates/index.html; school_docs remains reference-only.
+- BL-006 | open | low | If requested, design a non-destructive migration plan from school_docs/files + school_docs/notes split into category folders. | Keep current canonical split model unless a dedicated re-organization task is approved.
+- BL-007 | open | low | Add school_docs manifest and periodic duplicate-review pass after examination milestone. | Manifest should describe current files/notes split inventory as reference corpus and note any duplicate-review candidates.
+- BL-008 | open | medium | Run a bi-weekly requirement-trace drift scan against 00_admin/claudeexport and 00_admin/document_pdf.pdf, then update admin logs when assignment criteria interpretation changes. | Admin-only governance safeguard; do not force runtime/script edits unless explicitly requested.
+- BL-009 | open | high | Assignment Improvements Initiative (grouped): deliver missing assignment-critical evidence first, then runtime correctness, logic quality, and notebook hygiene tasks. | Parent initiative aligned to 00_admin/claudeexport + 00_admin/document_pdf.pdf and tracked via BL-010..BL-013.
+- BL-010 | open | high | Stream A (assignment-critical evidence): implement evaluation outputs and baseline comparisons needed for grading defensibility. | Include: Precision@5/Recall@10/MRR three-system comparison, BM25 baseline, Euclidean-vs-cosine comparison cell, alpha sensitivity bug fix + confirmed run.
+- BL-011 | open | high | Stream B (runtime correctness bugs): verify and fix click and score consistency issues that can invalidate observed ranking behavior. | Include: click registration E2E confirmation, raw_clicks/raw_global loop placement confirmation, integer count display consistency, click_store doc ID type consistency, global_clicks mid-session freshness, year parsing robustness, sklearn warning resolution via local re-export, click_store write race-risk mitigation.
+- BL-012 | open | medium | Stream C (logic improvements): improve scoring and pipeline consistency while preserving assignment behavior. | Include: POS aggregation strategy review (avg vs max/mode), preprocessing parity check notebook vs Flask, author keyword 1.5x boost implementation or explicit documented limitation, tune/justify newest-oldest cosine threshold.
+- BL-013 | open | medium | Stream D (missing features + notebook hygiene): complete feature and reproducibility gaps tied to assignment narrative. | Include: WordNet query expansion, category filter in Flask UI, remove duplicate notebook import cells, ensure raw exploration precedes filtering, remove Streamlit tunnel cells, confirm SettingWithCopy .copy() fix, persist doc_years artifact.
+- BL-014 | open | low | Run post-structure-drift governance check after any future folder move under school_docs or 00_admin. | Verify decision_log/change_log impacted paths and note references in school_docs/notes still resolve to canonical locations.
+- BL-015 | open | low | Run a monthly scope-boundary audit to ensure docs/instructions still classify school_docs as reference-only and runtime authority as app/template/artifacts. | Search for wording drift in .github/* and 00_admin/* after governance edits.
+- BL-016 | open | low | Run a monthly canonical-source consistency check to ensure assignment traceability references point to 00_admin/claudeexport and 00_admin/document_pdf.pdf across admin docs and memory. | Prevent drift after file moves/renames.

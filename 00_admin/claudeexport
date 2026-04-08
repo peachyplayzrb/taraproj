@@ -1,0 +1,3043 @@
+
+Building a method-aware search engine for research papers
+Shared by Tara
+This is a copy of a chat between Claude and Tara. Content may include unverified or unsafe content that do not represent the views of Anthropic. Shared snapshot may contain attachments and data not displayed here.
+
+Files hidden in shared chats
+I have an assignment for my Big Data module where im developing a search engine titled : Method Aware Search Engine for Computer Science Research Papers. the premise is to use this sort of logic : author specificies keywords related to the paper - 
+extract as much meta data from the paper and key words which are important , normalise those keywords and use those keywords to search . weigh their importance based on part of speech tagging (noun, hyphenated word etc.)
+. attached is my assignment brief , and these are all the notes i have written through the course : . I need to finish my solution. explain how Im meant to build this solution and suggest any enhancments. give me a detailed step by step
+
+Mar 25
+
+Reading the frontend design skill
+Reading the frontend design skill
+Here's a comprehensive breakdown of how to build your Method-Aware Search Engine for Computer Science Research Papers, along with enhancements drawn from your notes and the assignment brief.
+
+What you're building
+A search engine that doesn't just keyword-match — it understands the importance of terms based on their linguistic role (nouns carry more meaning than prepositions), uses TF-IDF weighting, cosine similarity for ranking, and learns from user click behaviour to improve future results.
+
+Let me lay out the full architecture and pipeline first, then walk through each stage.
+
+
+
+Stage-by-stage breakdown
+Stage 1 — Dataset acquisition
+Your dataset needs to be referenced and justified (your notes flag this as critical). Use CORD-19 (from the assignment brief's Appendix B — it's a well-cited academic dataset of CS/medical papers) or arXiv CS papers from Kaggle. The CORD-19 dataset from Allen AI is ideal because it includes abstracts, author keywords, titles, and body text — all of which you'll extract metadata from.
+
+Key fields to extract per paper: title, abstract, authors, keywords (author-specified), doi, year.
+
+Stage 2 — ETL preprocessing pipeline
+Follow the exact 12-step sequence from your notes. Here's the full implementation order:
+
+Load only necessary columns (title, abstract, keywords)
+Analyse the raw data first — plot distributions, missing values, class balance — before cleaning
+Drop nulls, remove duplicates
+Lowercase everything
+Tokenise (use nltk.word_tokenize)
+Remove stop words (nltk.corpus.stopwords)
+Remove punctuation
+Remove numbers
+Porter stemmer (nltk.stem.PorterStemmer) on each token
+Join keyword columns with abstract for a combined text field
+Convert to vector representation
+Stage 3 — POS tagging and method-aware weighting
+This is the core novelty of your project. Use nltk.pos_tag or spaCy on the original (un-stemmed) text before stemming, then carry the POS labels forward. Assign multipliers:
+
+POS category	Multiplier	Rationale
+Nouns (NN, NNS, NNP)	2.0	Domain concepts: "transformer", "gradient"
+Hyphenated compounds	1.8	Specialist terms: "self-attention"
+Verbs (VB, VBD)	1.2	Methods: "classifies", "evaluates"
+Adjectives (JJ)	1.0	Qualifiers
+Everything else	0.5	Articles, prepositions, etc.
+Author-specified keywords get an additional boost (multiply by 1.5) since the author chose them deliberately.
+
+Stage 4 — TF-IDF vector construction
+Your weight formula becomes:
+
+weight(t, d) = TF(t,d) × IDF(t) × POS_multiplier(t) × keyword_boost(t)
+
+Where:
+
+TF(t,d) = count of term t in doc d / total terms in d
+IDF(t) = log₁₀(N / df(t)) where N = total docs, df(t) = docs containing t
+Build this as a sparse matrix. sklearn.feature_extraction.text.TfidfVectorizer gives you a baseline — but you'll need to customise the weights to inject POS multipliers on top.
+Use sklearn for the initial TF-IDF, then multiply the resulting sparse matrix column-wise by your POS weight vector.
+
+Stage 5 — Index storage
+Store the TF-IDF matrix and the inverted index (term → list of doc IDs + weights) in a database. Your notes mention PostgreSQL with vector support (pgvector extension) — this directly supports cosine similarity queries with <=> operator, which is exactly what you need. Alternatively, keep it simpler with SQLite and compute cosine similarity in Python at query time.
+
+Stage C — Cosine similarity at query time
+Apply the same preprocessing pipeline to the user's query
+Apply the same POS weighting to query terms
+Build a query vector in the same vector space as your documents
+Compute cosine similarity: cos(θ) = (q · d) / (|q| × |d|)
+Rank documents by descending score
+Discuss both cosine similarity and Euclidean distance in your report and justify which you chose (cosine is preferred because it's magnitude-invariant — a long paper and a short paper can still rank equally if they discuss the same topics).
+
+Stage D — Click-through re-ranking (your focal point enhancement)
+From your notes: "if user searches A and doc 1 and 2 show up, and user clicks doc 2, another user searching the same term will see doc 2 first."
+
+Store click events in a table: (query_terms, doc_id, click_count). At retrieval time, blend the cosine score with a click-popularity score:
+
+final_score = α × cosine_score + (1 − α) × click_score
+
+Where α ≈ 0.7 keeps retrieval quality dominant but surfaces popular results. This is a simplified version of what Google's PageRank + CTR system does — mention this in your related work.
+
+Enhancements to add (and justify in your viva)
+1. BM25 as a comparison baseline — implement BM25 alongside TF-IDF. It handles document length normalisation better. Compare Precision@5 for both and include the results table. This directly answers the assignment's requirement to justify the methodology by trying multiple approaches.
+
+2. Query expansion — if a user searches "neural net", expand to "neural network", "deep learning". Use WordNet via nltk.corpus.wordnet. This directly helps recall.
+
+3. Magnitude vs cosine discussion — your notes explicitly say to try both and discuss. Add a toggle in your UI or a config flag, run example queries both ways, and include the score differences in your results table.
+
+4. Dashboard — your notes mention this as optional. A simple Flask/Streamlit interface showing: top 10 results, score breakdowns per result, which terms contributed most to the match (explainability), and a click-count leaderboard.
+
+Evaluation (critical for the viva)
+You need to prove your method is good. Create a small relevance judgement set — take 20 queries, manually label which of the top-10 results are relevant, then compute:
+
+Precision@5 — of the top 5 results, how many are relevant?
+Recall@10 — of all relevant docs, how many appear in top 10?
+MRR (Mean Reciprocal Rank) — where does the first relevant result appear?
+Compare three systems: (1) basic TF-IDF, (2) POS-weighted TF-IDF, (3) POS-weighted + click boosting. This gives you a clear results table and a defensible conclusion.
+
+Tech stack recommendation
+Component	Tool
+Language	Python 3.10+
+NLP / POS	spaCy (en_core_web_sm) or NLTK
+TF-IDF	scikit-learn + custom multipliers
+Database	PostgreSQL + pgvector, or SQLite
+Web interface	Flask or Streamlit
+Visualisation	matplotlib / seaborn for the report charts
+Report format	IEEE double-column template (LaTeX or Word)
+Your code appendix should be a Jupyter notebook showing each pipeline stage with cell outputs — this makes the data exploration and cleaning steps visible and verifiable, which is exactly what the brief asks for.
+
+How is the user query processed?
+
+Mar 25
+Here
+
+Claude's response was interrupted
+Tell me more about the data acquisition stage
+
+Mar 26
+Data Acquisition Stage
+This is one of the most important parts of your project — your notes repeatedly emphasise that the dataset must be referenced and justified. Here's everything you need to know.
+
+What dataset to use
+For a search engine over CS research papers, you have two strong options:
+
+Option 1 — CORD-19 (recommended) Available at https://allenai.org/data/cord-19 — it's listed directly in your assignment brief's Appendix B. It contains 500,000+ scholarly articles with structured metadata including titles, abstracts, author keywords, and full body text. It's widely cited in academic literature, which means you can find IEEE/ACM papers that reference it — satisfying the "dataset referenced by someone else" requirement your notes highlight in capitals.
+
+Option 2 — arXiv CS papers via Kaggle Search Kaggle for "arxiv dataset" — there's a well-known snapshot with ~2 million papers. It includes title, abstract, authors, categories, and doi. The CS subset alone gives you tens of thousands of papers. Kaggle datasets are citable and used extensively in published work.
+
+What fields to extract
+Not all columns are useful. Per your notes: "use only the necessary columns". The fields you need are:
+
+Field	Why you need it
+title	High-weight source — nouns in titles are very indicative
+abstract	Primary text for TF-IDF indexing
+keywords	Author-specified — get a 1.5× boost in your POS weighting
+doi / id	Unique document identifier for the index
+year	Useful for filtering and recency scoring
+authors	Useful for author-based search queries
+Drop everything else — full body text, references lists, funding acknowledgements. These add noise and processing overhead.
+
+Data exploration before cleaning
+Your notes are explicit: "analyse the dataset before you clean". This means your first notebook cells should produce:
+
+A bar chart of papers per year (shows temporal distribution)
+A histogram of abstract lengths (shows how much text you're working with)
+A count of missing values per column (shows what needs handling)
+A word cloud or top-50 term frequency plot on raw abstracts (shows noise before cleaning)
+A check for class imbalance if you're predicting any category label
+This exploration section becomes a chunk of your Results and Discussion section in the report, and it shows the marker you followed the pipeline properly.
+
+How to justify the dataset in your report
+Your abstract and background sections need to answer: why is this dataset valid? The argument structure is:
+
+It is publicly available and free (no scraping, no invented data — your notes flag this)
+It is used and cited in published academic work (find 2–3 IEEE/ACM papers that used CORD-19 or arXiv as a benchmark — cite those)
+It contains author-specified keywords, which is the foundation of your method-aware approach — no other dataset type gives you this signal as cleanly
+It is large enough to make TF-IDF meaningful (IDF needs many documents to be stable — a few hundred papers is too few; aim for 10,000+)
+Practical steps to get started
+python
+# For the arXiv Kaggle dataset
+import pandas as pd
+import json
+
+# Load and inspect
+df = pd.read_json('arxiv-metadata-oai-snapshot.json', lines=True)
+
+# Keep only CS papers
+df_cs = df[df['categories'].str.contains('cs\.', na=False)]
+
+# Keep only necessary columns
+df_cs = df_cs[['id', 'title', 'abstract', 'authors', 'categories', 'update_date']]
+
+# Initial exploration
+print(df_cs.isnull().sum())          # missing values
+print(df_cs['abstract'].str.len().describe())  # length distribution
+df_cs['year'] = df_cs['update_date'].str[:4]
+df_cs['year'].value_counts().sort_index().plot(kind='bar')
+This exploration output goes directly into your notebook appendix — it's the evidence that you didn't just blindly feed data into a model.
+
+What to say in the viva
+If Omar asks "how do you know your dataset is valid?", your answer should cover three things: it's publicly available and referenced in prior work (cite the papers), it contains the specific metadata your method depends on (author keywords), and you performed an exploratory analysis before cleaning which revealed X problems that you then addressed. That last point — showing you found problems and fixed them — is what separates a strong submission from a weak one.
+
+Files hidden in shared chats
+so on google co lab i ran these code lines : 
+
+import pandas as pd
+import matplotlib.pyplot as plt
+
+file_path = "/content/drive/MyDrive/arxiv-metadata-oai-snapshot.json"
+df_iter = pd.read_json(file_path, lines=True, chunksize=10000)
+df = next(df_iter)
+
+df.head()
+
+df_cs = df[df['categories'].str.contains(r'cs\.', na=False)]
+
+df_cs = df_cs[['id', 'title', 'abstract', 'authors', 'categories', 'update_date']]
+
+print(df_cs['abstract'].str.len().describe())
+
+df_cs['year'] = df_cs['update_date'].str[:4]
+
+df_cs['year'].value_counts().sort_index().plot(kind='bar')
+plt.show()
+
+and these are the results i got
+Show more
+Mar 29
+Good start! Your exploration is working. Here's what your results are telling you and what you need to do about them.
+
+What the results reveal
+The null check — zero nulls across all columns, which is clean. However this is only because you loaded chunksize=10000 (just the first 10,000 rows of the full dataset). Nulls may appear when you load more data, so keep that check in your final pipeline.
+
+The abstract lengths — mean of 854 characters, min of 47. That minimum is a red flag. A 47-character abstract is essentially useless for TF-IDF indexing — there aren't enough terms to build a meaningful vector. You'll want to filter those out.
+
+The year distribution — this is the bigger problem. The bulk of your papers are from 2007–2016, with a massive spike at 2007. This is almost certainly a data loading artefact — the arXiv snapshot is sorted by submission date, so the first 10,000 rows are the oldest papers. For a CS research search engine this is problematic because the field has changed enormously since 2007 — papers from then won't mention transformers, BERT, LLMs, or any modern terminology your users would search for.
+
+What you need to fix
+Problem 1 — you're only loading the first chunk. Replace your loading strategy to either load the full file (if Colab RAM allows) or sample randomly across the file:
+
+python
+import pandas as pd
+import random
+
+file_path = "/content/drive/MyDrive/arxiv-metadata-oai-snapshot.json"
+
+# Load all chunks and sample evenly across the dataset
+chunks = []
+for chunk in pd.read_json(file_path, lines=True, chunksize=10000):
+    cs_chunk = chunk[chunk['categories'].str.contains(r'cs\.', na=False)]
+    if len(cs_chunk) > 0:
+        chunks.append(cs_chunk)
+    if len(chunks) >= 50:  # adjust this — 50 chunks = up to 500k rows scanned
+        break
+
+df_cs = pd.concat(chunks, ignore_index=True)
+df_cs = df_cs[['id', 'title', 'abstract', 'authors', 'categories', 'update_date']]
+df_cs['year'] = df_cs['update_date'].str[:4]
+
+print(f"Total CS papers: {len(df_cs)}")
+print(df_cs['year'].value_counts().sort_index())
+Problem 2 — filter out thin abstracts. Add this after loading:
+
+python
+# Document this filtering step in your report
+before = len(df_cs)
+df_cs = df_cs[df_cs['abstract'].str.len() >= 200]
+after = len(df_cs)
+print(f"Removed {before - after} papers with abstracts under 200 characters")
+Problem 3 — consider filtering by year. For relevance to modern CS search, keep papers from 2015 onwards. Mention this filtering decision explicitly in your methodology — your notes say "if you filter the data, explain it, else he will assume you used the entire dataset."
+
+python
+df_cs = df_cs[df_cs['year'].astype(int) >= 2015]
+print(f"Papers from 2015 onwards: {len(df_cs)}")
+What to write in your report about this
+In your methodology section, under data cleaning, you document each decision like this:
+
+Loaded the arXiv CS subset from the full snapshot
+Found: heavy temporal skew toward 2007–2009 due to file ordering
+Action: sampled across the full file to obtain a balanced temporal distribution; filtered to 2015–2025 for domain relevance
+Found: 47-character minimum abstract length, indicating near-empty records
+Action: removed documents with abstracts shorter than 200 characters (N=X removed)
+Found: zero null values in required columns after filtering
+Each of these bullet points is a marking opportunity — it shows Omar you ran the exploration, identified real problems, and made justified decisions. That's exactly what the brief asks for.
+
+ok, now whats next. is it time to start etl preprocessing?
+
+Mar 29
+Yes! Your exploration is done and documented, so ETL preprocessing is exactly the next step. Here's the full pipeline you need to run, in order.
+
+First — a quick checkpoint
+Before starting ETL, make sure your df_cs dataframe is in good shape from the last step. Run this to confirm:
+
+python
+print(f"Shape: {df_cs.shape}")
+print(f"Year range: {df_cs['year'].min()} - {df_cs['year'].max()}")
+print(f"Sample abstract:\n{df_cs['abstract'].iloc[0]}")
+If that looks good, proceed.
+
+The full ETL pipeline
+Install and import everything you need first:
+
+python
+import nltk
+import spacy
+import re
+import pandas as pd
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+from nltk.stem import PorterStemmer
+
+nltk.download('punkt')
+nltk.download('stopwords')
+nltk.download('averaged_perceptron_tagger')
+
+stop_words = set(stopwords.words('english'))
+stemmer = PorterStemmer()
+Step 1 — Combine your text fields
+Before any cleaning, merge title, abstract, and any keywords into one field. Title words are more important so you repeat them (a simple way to boost their weight before POS tagging):
+
+python
+def combine_fields(row):
+    # Title repeated twice to give it natural weight boost
+    title = str(row['title']).strip()
+    abstract = str(row['abstract']).strip()
+    return f"{title} {title} {abstract}"
+
+df_cs['combined_text'] = df_cs.apply(combine_fields, axis=1)
+Step 2 — POS tagging (do this BEFORE cleaning)
+This is critical — you must POS tag the original text before stemming destroys the word forms. NLTK's tagger needs real words like "classifies" and "neural", not stems like "classifi" and "neural":
+
+python
+def get_pos_weights(text):
+    """Returns dict of {token: pos_multiplier} for original text"""
+    tokens = word_tokenize(text.lower())
+    tagged = nltk.pos_tag(tokens)
+    
+    weights = {}
+    for word, tag in tagged:
+        if tag.startswith('NN'):      # Nouns
+            weights[word] = 2.0
+        elif tag.startswith('VB'):    # Verbs
+            weights[word] = 1.2
+        elif tag.startswith('JJ'):    # Adjectives
+            weights[word] = 1.0
+        else:
+            weights[word] = 0.5
+    return weights
+
+# Store POS weights alongside the text
+# Run on a small sample first to check speed
+sample = df_cs.head(5)
+sample['pos_weights'] = sample['combined_text'].apply(get_pos_weights)
+print(sample['pos_weights'].iloc[0])
+Once you're happy it works on the sample, run it on the full dataframe. Note: this will be slow on large datasets — on Colab, expect a few minutes for 10,000 rows. Store the result immediately:
+
+python
+df_cs['pos_weights'] = df_cs['combined_text'].apply(get_pos_weights)
+
+# Save a checkpoint so you don't have to rerun this
+df_cs.to_pickle('/content/drive/MyDrive/df_cs_pos_tagged.pkl')
+print("Checkpoint saved!")
+Step 3 — Lowercase
+python
+df_cs['cleaned'] = df_cs['combined_text'].str.lower()
+Step 4 — Remove punctuation
+python
+def remove_punctuation(text):
+    # Keep hyphens for now — hyphenated terms like "self-attention" are important
+    text = re.sub(r'[^\w\s\-]', '', text)
+    # Remove standalone hyphens
+    text = re.sub(r'\s-\s', ' ', text)
+    return text
+
+df_cs['cleaned'] = df_cs['cleaned'].apply(remove_punctuation)
+Step 5 — Remove numbers
+python
+df_cs['cleaned'] = df_cs['cleaned'].str.replace(r'\d+', '', regex=True)
+Step 6 — Tokenise
+python
+df_cs['tokens'] = df_cs['cleaned'].apply(word_tokenize)
+
+# Remove empty strings that sometimes appear
+df_cs['tokens'] = df_cs['tokens'].apply(lambda tokens: [t for t in tokens if t.strip()])
+Step 7 — Remove stop words
+python
+df_cs['tokens'] = df_cs['tokens'].apply(
+    lambda tokens: [t for t in tokens if t not in stop_words]
+)
+Step 8 — Porter stemming
+python
+df_cs['tokens'] = df_cs['tokens'].apply(
+    lambda tokens: [stemmer.stem(t) for t in tokens]
+)
+
+# Quick check
+print(df_cs['tokens'].iloc[0][:20])
+Step 9 — Rejoin into a clean string for TF-IDF
+python
+df_cs['processed_text'] = df_cs['tokens'].apply(lambda tokens: ' '.join(tokens))
+
+# Final check
+print(df_cs[['title', 'processed_text']].head(3))
+Step 10 — Save your cleaned dataset
+python
+df_cs.to_pickle('/content/drive/MyDrive/df_cs_cleaned.pkl')
+print(f"Saved {len(df_cs)} cleaned documents")
+What to document in your report
+After running each step, print before/after stats and save them — these go into your methodology section:
+
+python
+# Vocabulary size before vs after cleaning
+from collections import Counter
+import itertools
+
+all_tokens_raw = list(itertools.chain(*df_cs['combined_text'].str.lower().str.split()))
+all_tokens_clean = list(itertools.chain(*df_cs['tokens']))
+
+print(f"Vocab size before cleaning: {len(set(all_tokens_raw))}")
+print(f"Vocab size after cleaning:  {len(set(all_tokens_clean))}")
+print(f"Reduction: {round((1 - len(set(all_tokens_clean))/len(set(all_tokens_raw)))*100)}%")
+This vocabulary reduction number is important — it shows dimensionality reduction, which your notes say is crucial ("the less the better — less storage, less processing power"). A good pipeline typically reduces vocabulary by 40–60%.
+
+Once this is done, your next step is building the TF-IDF matrix with your POS multipliers applied on top — that's where your method becomes truly differentiated from a basic search engine. Let me know when your cleaning pipeline is running and we'll move on to that.
+
+Files hidden in shared chats
+This is my ipynb file so far, is it good as is can i move on to the next step or did i miss anything
+
+Mar 30
+Let me read your notebook first.
+
+
+Viewed a file, ran a command
+Viewed a file, ran a command
+Good news — the structure is solid. But there are a few things to fix and add before you move on. Here's a full review:
+
+What's good ✓
+Loading pipeline with chunking is correct
+Filtering by abstract length and year is there and documented
+POS tagging before cleaning — correct order
+All 12 ETL steps are present
+Checkpoint saves are in place
+Vocabulary reduction stats at the end
+Issues to fix before moving on
+1. Duplicate imports and downloads (cells 12, 13, 17)
+
+You have import nltk and the same downloads scattered across cells 12, 13, and 17. This is messy and will confuse a marker. Consolidate everything into one clean cell at the top:
+
+python
+# Cell 1 — All imports and downloads
+import pandas as pd
+import matplotlib.pyplot as plt
+import nltk
+import spacy
+import re
+import itertools
+from collections import Counter
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+from nltk.stem import PorterStemmer
+
+nltk.download('punkt')
+nltk.download('punkt_tab')
+nltk.download('stopwords')
+nltk.download('averaged_perceptron_tagger')
+nltk.download('averaged_perceptron_tagger_eng')
+
+stop_words = set(stopwords.words('english'))
+stemmer = PorterStemmer()
+Delete cells 13, 17, and the duplicate import nltk lines elsewhere.
+
+2. Exploration cells are in the wrong order (cells 8–11 come after filtering)
+
+Your exploration cells (shape, year distribution, bar chart) run after filtering, so they describe the cleaned dataset — not the raw one. For your report you need both: a raw exploration section and a post-cleaning comparison. Add these two cells right after cell 3 (after pd.concat but before any filtering):
+
+python
+# RAW data exploration — run BEFORE any filtering
+print("=== RAW DATA EXPLORATION ===")
+print(f"Total rows loaded: {len(df_cs)}")
+print(f"\nNull values:\n{df_cs.isnull().sum()}")
+print(f"\nAbstract length stats:\n{df_cs['abstract'].str.len().describe()}")
+
+df_cs_raw_year = df_cs.copy()
+df_cs_raw_year['year'] = df_cs_raw_year['update_date'].str[:4]
+df_cs_raw_year['year'].value_counts().sort_index().plot(kind='bar', title='Papers per year (raw)')
+plt.tight_layout()
+plt.show()
+Then your existing cells 8–11 become the post-filtering exploration, which is a direct comparison. This gives you the before/after story the assignment brief asks for.
+
+3. Missing: hyphenated term handling in POS weights
+
+Your notes specifically mention hyphenated words as important (e.g. "self-attention"). Your get_pos_weights function doesn't handle them. Add this case:
+
+python
+def get_pos_weights(text):
+    tokens = word_tokenize(text.lower())
+    tagged = nltk.pos_tag(tokens)
+
+    weights = {}
+    for word, tag in tagged:
+        if '-' in word:                   # Hyphenated compound terms
+            weights[word] = 1.8
+        elif tag.startswith('NN'):        # Nouns
+            weights[word] = 2.0
+        elif tag.startswith('VB'):        # Verbs
+            weights[word] = 1.2
+        elif tag.startswith('JJ'):        # Adjectives
+            weights[word] = 1.0
+        else:
+            weights[word] = 0.5
+    return weights
+4. Missing: author keyword boost
+
+Your notes and the whole premise of your project is that author-specified keywords get extra weight. The arXiv dataset doesn't have a separate keywords column, but you can approximate it — the categories field contains domain tags, and more importantly, you should note in your report that you'd apply a 1.5× boost to keywords if they were available. However, a better move is to scrape or use a dataset that has them (CORD-19 does). If you're sticking with arXiv, add a comment in the cell explaining this design decision — it shows Omar you thought about it.
+
+5. Missing: a cell that visualises the vocabulary reduction
+
+You compute the numbers in cell 28 but never plot them. Add a simple bar chart — it's a key result for your report:
+
+python
+vocab_before = len(set(all_tokens_raw))
+vocab_after = len(set(all_tokens_clean))
+
+plt.figure(figsize=(6, 4))
+plt.bar(['Before cleaning', 'After cleaning'], [vocab_before, vocab_after], 
+        color=['#d9534f', '#5cb85c'])
+plt.title('Vocabulary size reduction after ETL pipeline')
+plt.ylabel('Unique terms')
+for i, v in enumerate([vocab_before, vocab_after]):
+    plt.text(i, v + 100, str(v), ha='center', fontweight='bold')
+plt.tight_layout()
+plt.savefig('vocab_reduction.png', dpi=150)
+plt.show()
+print(f"Reduction: {round((1 - vocab_after/vocab_before)*100)}%")
+Order your cells should be in
+Once you've made the fixes, your notebook should flow like this:
+
+Cell	Content
+1	All imports and downloads
+2	Load file path
+3	Chunked loading loop
+4	pd.concat
+5 (new)	Raw data exploration (before filtering)
+6	Select columns
+7	Add year column
+8	Filter by abstract length
+9	Filter by year
+10	Post-filter exploration (shape, year chart)
+11	Combine fields
+12	get_pos_weights function (with hyphen fix)
+13	Sample test of POS weights
+14	Full POS tagging + pickle save
+15	Lowercase
+16	Remove punctuation
+17	Remove numbers
+18	Tokenise
+19	Remove stop words
+20	Stem
+21	Rejoin to processed_text
+22	Save cleaned pickle
+23	Vocab reduction stats + chart
+Make those fixes, then you're ready to move on to TF-IDF matrix construction with POS multipliers — which is the core of your search engine.
+
+with this last cell 
+
+vocab_before = len(set(all_tokens_raw))
+vocab_after = len(set(all_tokens_clean))
+
+plt.figure(figsize=(6, 4))
+plt.bar(['Before cleaning', 'After cleaning'], [vocab_before, vocab_after], 
+        color=['#d9534f', '#5cb85c'])
+plt.title('Vocabulary size reduction after ETL pipeline')
+plt.ylabel('Unique terms')
+for i, v in enumerate([vocab_before, vocab_after]):
+    plt.text(i, v + 100, str(v), ha='center', fontweight='bold')
+plt.tight_layout()
+plt.savefig('vocab_reduction.png', dpi=150)
+plt.show()
+print(f"Reduction: {round((1 - vocab_after/vocab_before)*100)}%")
+im getting this error ---------------------------------------------------------------------------
+
+NameError                                 Traceback (most recent call last)
+/tmp/ipykernel_9295/3167047329.py in <cell line: 0>()
+----> 1 vocab_before = len(set(all_tokens_raw))
+      2 vocab_after = len(set(all_tokens_clean))
+      3 
+      4 plt.figure(figsize=(6, 4))
+      5 plt.bar(['Before cleaning', 'After cleaning'], [vocab_before, vocab_after],
+NameError: name 'all_tokens_raw' is not defined
+Show more
+Mar 30
+The variables all_tokens_raw and all_tokens_clean were defined in cell 28 of your original notebook but got separated from this plotting cell. You just need to combine them into one cell:
+
+python
+from collections import Counter
+import itertools
+
+# Compute vocabulary lists
+all_tokens_raw = list(itertools.chain(*df_cs['combined_text'].str.lower().str.split()))
+all_tokens_clean = list(itertools.chain(*df_cs['tokens']))
+
+# Calculate sizes
+vocab_before = len(set(all_tokens_raw))
+vocab_after = len(set(all_tokens_clean))
+
+# Plot
+plt.figure(figsize=(6, 4))
+plt.bar(['Before cleaning', 'After cleaning'], [vocab_before, vocab_after],
+        color=['#d9534f', '#5cb85c'])
+plt.title('Vocabulary size reduction after ETL pipeline')
+plt.ylabel('Unique terms')
+for i, v in enumerate([vocab_before, vocab_after]):
+    plt.text(i, v + 100, str(v), ha='center', fontweight='bold')
+plt.tight_layout()
+plt.savefig('vocab_reduction.png', dpi=150)
+plt.show()
+print(f"Vocab before: {vocab_before}")
+print(f"Vocab after:  {vocab_after}")
+print(f"Reduction: {round((1 - vocab_after/vocab_before)*100)}%")
+The key thing is that all_tokens_raw depends on df_cs['combined_text'] and all_tokens_clean depends on df_cs['tokens'] — both of which need to exist in memory. If you're running cells out of order or restarted the runtime, those columns might not exist yet. If you still get an error after combining the cells, run this quick check first:
+
+python
+print(df_cs.columns.tolist())
+That will confirm whether combined_text and tokens are present. If either is missing it means one of the earlier ETL cells didn't run — just re-run the notebook from the top in order and it'll work.
+
+Files hidden in shared chats
+ok now what about this
+
+Mar 30
+
+Reading the updated notebook
+Reading the updated notebook
+Notebook is in great shape — everything ran successfully. Here's the full review:
+
+What's working well ✓
+23,680 papers loaded and filtered correctly
+POS tagging working — you can see non-cubically getting 1.8 (hyphenated), convergence getting 2.0 (noun), performed getting 1.2 (verb) — exactly right
+Stemming output looks correct: converg, approxim, analysi etc.
+Checkpoint saves both at POS stage and cleaned stage
+58% vocabulary reduction — that's a strong result, sits right in the expected 40–60% range, and is a great number to cite in your report
+Two things to fix before moving on
+1. Duplicate cell 16 — delete it
+
+Cell 16 is still there with redundant nltk.download calls. Everything in it was already done in cell 1. Just delete it — it makes your notebook look unorganised to a marker.
+
+2. SettingWithCopyWarning in cell 17
+
+You got this warning:
+
+SettingWithCopyWarning: A value is trying to be set on a copy of a slice from a DataFrame.
+This is because sample = df_cs.head(5) creates a copy, then you assign to it. It won't break anything, but it looks bad. Fix cell 17 like this:
+
+python
+# Test POS weights on a sample
+sample = df_cs.head(5).copy()  # add .copy() here
+sample['pos_weights'] = sample['combined_text'].apply(get_pos_weights)
+print(sample['pos_weights'].iloc[0])
+One thing to note for your report
+Looking at cell 11, your year distribution is heavily skewed — 16,544 papers from 2015 alone out of 23,680 total. That's 70% from one year. This is worth explicitly mentioning in your methodology section as a known limitation, and you should note it's a consequence of how the arXiv snapshot is structured (earlier papers dominate the first chunks of the file). You don't need to fix it, just document it.
+
+You're ready for the next step
+ETL is complete. Your next step is building the TF-IDF matrix with POS multipliers applied, which is the core of your search engine. When you're ready just say the word and I'll walk you through it.
+
+Yes im ready for ETL
+
+Mar 30
+You actually just finished ETL — that was the preprocessing pipeline you've been building! What comes next is TF-IDF matrix construction, which is the indexing stage. Here's the full pipeline:
+
+Step 1 — Build the baseline TF-IDF matrix
+Start with scikit-learn's TfidfVectorizer to get your base matrix, then you'll apply the POS multipliers on top:
+
+python
+from sklearn.feature_extraction.text import TfidfVectorizer
+import numpy as np
+import scipy.sparse as sp
+
+# Build base TF-IDF matrix from your cleaned, stemmed text
+vectorizer = TfidfVectorizer(
+    max_features=50000,    # cap dimensions to keep it manageable
+    min_df=2,              # ignore terms appearing in fewer than 2 docs
+    max_df=0.95,           # ignore terms appearing in more than 95% of docs
+    ngram_range=(1, 2)     # include bigrams e.g. "neural network" as one feature
+)
+
+tfidf_matrix = vectorizer.fit_transform(df_cs['processed_text'])
+feature_names = vectorizer.get_feature_names_out()
+
+print(f"Matrix shape: {tfidf_matrix.shape}")
+print(f"Documents: {tfidf_matrix.shape[0]}, Features: {tfidf_matrix.shape[1]}")
+print(f"Sample features: {feature_names[:20]}")
+Step 2 — Build the POS weight vector
+You already have pos_weights per document. Now you need a single global POS multiplier vector — one weight per feature in your vocabulary:
+
+python
+def build_pos_weight_vector(feature_names, df_pos_weights):
+    """
+    For each term in the vocabulary, find its average POS weight
+    across all documents that contain it.
+    """
+    # Aggregate weights across all documents
+    term_weights = {}
+    term_counts = {}
+    
+    for doc_weights in df_cs['pos_weights']:
+        for term, weight in doc_weights.items():
+            # Stem the term to match the vocabulary
+            stemmed = stemmer.stem(term)
+            if stemmed in term_weights:
+                term_weights[stemmed] += weight
+                term_counts[stemmed] += 1
+            else:
+                term_weights[stemmed] = weight
+                term_counts[stemmed] = 1
+    
+    # Build weight vector aligned to feature_names order
+    pos_weight_vector = np.ones(len(feature_names))  # default = 1.0
+    for i, term in enumerate(feature_names):
+        if term in term_weights:
+            pos_weight_vector[i] = term_weights[term] / term_counts[term]
+    
+    return pos_weight_vector
+
+pos_weight_vector = build_pos_weight_vector(feature_names, df_cs['pos_weights'])
+
+print(f"POS weight vector shape: {pos_weight_vector.shape}")
+print(f"Min weight: {pos_weight_vector.min():.2f}")
+print(f"Max weight: {pos_weight_vector.max():.2f}")
+print(f"Mean weight: {pos_weight_vector.mean():.2f}")
+Step 3 — Apply POS multipliers to the TF-IDF matrix
+python
+# Multiply each column (term) by its POS weight
+# tfidf_matrix is sparse — use efficient sparse multiplication
+pos_weight_diag = sp.diags(pos_weight_vector)
+tfidf_pos_matrix = tfidf_matrix.dot(pos_weight_diag)
+
+print(f"POS-weighted matrix shape: {tfidf_pos_matrix.shape}")
+
+# Verify a sample — compare a term's weight before and after
+sample_term = 'neural'
+if sample_term in feature_names:
+    idx = list(feature_names).index(sample_term)
+    print(f"\nTerm '{sample_term}':")
+    print(f"  POS multiplier: {pos_weight_vector[idx]:.3f}")
+    print(f"  TF-IDF before: {tfidf_matrix[0, idx]:.4f}")
+    print(f"  TF-IDF after:  {tfidf_pos_matrix[0, idx]:.4f}")
+Step 4 — Save everything
+python
+import pickle
+
+# Save the matrix and vectorizer — you need both at query time
+sp.save_npz('/content/drive/MyDrive/tfidf_pos_matrix.npz', tfidf_pos_matrix)
+sp.save_npz('/content/drive/MyDrive/tfidf_base_matrix.npz', tfidf_matrix)
+
+with open('/content/drive/MyDrive/vectorizer.pkl', 'wb') as f:
+    pickle.dump(vectorizer, f)
+
+with open('/content/drive/MyDrive/pos_weight_vector.pkl', 'wb') as f:
+    pickle.dump(pos_weight_vector, f)
+
+# Save doc IDs aligned to matrix rows
+doc_ids = df_cs['id'].tolist()
+doc_titles = df_cs['title'].tolist()
+
+with open('/content/drive/MyDrive/doc_ids.pkl', 'wb') as f:
+    pickle.dump(doc_ids, f)
+
+with open('/content/drive/MyDrive/doc_titles.pkl', 'wb') as f:
+    pickle.dump(doc_titles, f)
+
+print("All index files saved!")
+Step 5 — Build the query function
+This is the actual search. The query goes through the exact same pipeline as your documents:
+
+python
+def search(query, top_k=10):
+    """
+    Process query through the same pipeline as documents,
+    apply POS weighting, compute cosine similarity, return ranked results.
+    """
+    # Step 1 — preprocess query (same pipeline as documents)
+    query_clean = query.lower()
+    query_clean = remove_punctuation(query_clean)
+    query_clean = re.sub(r'\d+', '', query_clean)
+    query_tokens = word_tokenize(query_clean)
+    query_tokens = [t for t in query_tokens if t not in stop_words]
+    query_tokens = [stemmer.stem(t) for t in query_tokens]
+    query_processed = ' '.join(query_tokens)
+    
+    # Step 2 — vectorise using the same fitted vectorizer
+    query_vec = vectorizer.transform([query_processed])
+    
+    # Step 3 — apply POS weights to query vector
+    query_vec_pos = query_vec.dot(pos_weight_diag)
+    
+    # Step 4 — cosine similarity against all documents
+    from sklearn.metrics.pairwise import cosine_similarity
+    scores = cosine_similarity(query_vec_pos, tfidf_pos_matrix).flatten()
+    
+    # Step 5 — rank and return top k
+    top_indices = scores.argsort()[::-1][:top_k]
+    
+    results = []
+    for rank, idx in enumerate(top_indices, 1):
+        results.append({
+            'rank': rank,
+            'id': doc_ids[idx],
+            'title': doc_titles[idx],
+            'score': round(scores[idx], 4)
+        })
+    
+    return results
+
+# Test it
+results = search("deep learning image classification")
+for r in results:
+    print(f"{r['rank']}. [{r['score']}] {r['title']}")
+Step 6 — Compare baseline vs POS-weighted (important for your report)
+This is the key evaluation cell that justifies your methodology:
+
+python
+def search_baseline(query, top_k=10):
+    """Same search but using base TF-IDF without POS weighting"""
+    query_clean = query.lower()
+    query_clean = remove_punctuation(query_clean)
+    query_clean = re.sub(r'\d+', '', query_clean)
+    query_tokens = word_tokenize(query_clean)
+    query_tokens = [t for t in query_tokens if t not in stop_words]
+    query_tokens = [stemmer.stem(t) for t in query_tokens]
+    query_processed = ' '.join(query_tokens)
+    
+    query_vec = vectorizer.transform([query_processed])
+    from sklearn.metrics.pairwise import cosine_similarity
+    scores = cosine_similarity(query_vec, tfidf_matrix).flatten()
+    top_indices = scores.argsort()[::-1][:top_k]
+    
+    return [{'rank': i+1, 'id': doc_ids[idx], 
+              'title': doc_titles[idx], 'score': round(scores[idx], 4)} 
+            for i, idx in enumerate(top_indices)]
+
+# Side by side comparison
+query = "neural network optimisation"
+print(f"Query: '{query}'\n")
+print("=== BASELINE TF-IDF ===")
+for r in search_baseline(query, top_k=5):
+    print(f"  {r['rank']}. [{r['score']}] {r['title']}")
+
+print("\n=== POS-WEIGHTED TF-IDF ===")
+for r in search(query, top_k=5):
+    print(f"  {r['rank']}. [{r['score']}] {r['title']}")
+Run this comparison on 4–5 different queries and save the outputs — this table goes directly into your Results and Discussion section and is one of the strongest parts of your report. The differences in ranking between the two approaches is your evidence that POS weighting adds value.
+
+Once this is all running, the next step is adding the click-through re-ranking layer on top. Let me know how you get on!
+
+Files hidden in shared chats
+what do you think so far
+
+Mar 31
+
+Reading the updated notebook
+Reading the updated notebook
+This is looking really solid overall — the core engine is working. Here's a full honest assessment:
+
+What's working well ✓
+TF-IDF matrix built correctly: 23,680 documents × 50,000 features
+POS weight vector range is exactly right: min 0.50, max 2.00, mean 1.11
+Search function returning sensible results — "deep learning image classification" returns relevant papers
+Baseline vs POS comparison is running
+All files saved to Drive correctly
+One thing to flag — the neural multiplier
+In cell 29 you got this:
+
+Term 'neural':
+  POS multiplier: 0.997
+That should be close to 2.0 since "neural" is a noun/adjective in CS papers. The reason it's 0.997 is that your POS tagger is seeing "neural" tagged inconsistently across documents — sometimes as adjective (JJ = 1.0), sometimes as noun (NN = 2.0), sometimes as other (0.5) — and the average is pulling it down. This is actually fine and worth mentioning in your report as a known limitation of averaging POS weights globally. It's not a bug, it's a discussion point.
+
+The comparison results need more queries
+Looking at your cell 32 output for "neural network optimisation", the rankings do differ between baseline and POS-weighted, but the difference is subtle. You need to run at least 4-5 more queries and save the outputs to make a convincing results table. Add this cell:
+
+python
+test_queries = [
+    "deep learning image classification",
+    "neural network optimisation",
+    "natural language processing transformer",
+    "reinforcement learning robotics",
+    "graph neural network node classification",
+    "convolutional network object detection"
+]
+
+print("=" * 80)
+for query in test_queries:
+    print(f"\nQUERY: '{query}'")
+    print(f"{'Rank':<6} {'Baseline':<55} {'POS-Weighted':<55}")
+    print("-" * 80)
+    
+    baseline = search_baseline(query, top_k=5)
+    pos_results = search(query, top_k=5)
+    
+    for b, p in zip(baseline, pos_results):
+        b_title = b['title'][:45].replace('\n', ' ')
+        p_title = p['title'][:45].replace('\n', ' ')
+        print(f"{b['rank']:<6} [{b['score']}] {b_title:<45}  [{p['score']}] {p_title}")
+    print("=" * 80)
+Two things missing before you move on
+1. Also save doc_abstracts — you'll need it for the UI
+
+Right now you only save titles and IDs. When you build the search interface, you'll want to show a snippet of the abstract in results. Add this to cell 30:
+
+python
+doc_abstracts = df_cs['abstract'].tolist()
+with open('/content/drive/MyDrive/doc_abstracts.pkl', 'wb') as f:
+    pickle.dump(doc_abstracts, f)
+print("Abstracts saved!")
+2. Add the doc_abstracts to your search function return
+
+Update your results.append(...) in the search function to include the abstract:
+
+python
+results.append({
+    'rank': rank,
+    'id': doc_ids[idx],
+    'title': doc_titles[idx],
+    'abstract': doc_abstracts[idx][:300] + '...',  # snippet
+    'score': round(scores[idx], 4)
+})
+You're ready for click-through re-ranking
+Once you've added those two fixes and run the multi-query comparison cell, your next step is the click-through re-ranking layer — the feature your notes call the "focal point" of the search engine. That's where a user clicking a result boosts it for future searches of the same query. Say the word and I'll walk you through it.
+
+Files hidden in shared chats
+ok ive implemented the changes take a look
+
+Mar 31
+
+Reading the updated notebook
+Reading the updated notebook
+This is in great shape — the comparison results are genuinely interesting and tell a strong story. Let me break it all down.
+
+What's excellent ✓
+All the changes are in correctly — doc_abstracts saved, snippet in search results, multi-query comparison running. No errors anywhere.
+
+What the comparison results are telling you
+This is important for your report. Look at these two queries specifically:
+
+"graph neural network node classification"
+
+Baseline rank 1: "Building a Chaotic Proved Neural Network" — clearly wrong, matches "neural network" but has nothing to do with graphs or node classification
+POS rank 1: "Node Classification in Social Networks" — directly relevant
+"deep learning image classification"
+
+Baseline rank 1: "Deep Learning using Linear Support Vector Machines" — matches keywords but SVM isn't really the topic
+POS rank 1: "Advances in Hyperspectral Image Classification" — much more relevant
+This is your headline finding for the report. POS weighting is promoting noun-heavy domain-specific results over papers that just happen to repeat the query words frequently. Write that up explicitly.
+
+One structural issue to fix — cells 32 and 33 are in the wrong order
+Cell 32 calls search_baseline() but that function isn't defined until cell 33. This means if anyone runs the notebook top to bottom it will crash with a NameError. Swap them — put the search_baseline definition before the comparison table:
+
+Correct order should be:
+
+Cell 31: search() function ✓ (already there)
+Cell 32: search_baseline() function (currently cell 33)
+Cell 33: multi-query comparison table (currently cell 32)
+Two small additions worth making
+1. Add abstract snippet to the search function test output so you can actually see what the paper is about when evaluating results. Update the test at the bottom of cell 31:
+
+python
+# Test it
+results = search("deep learning image classification")
+for r in results:
+    print(f"{r['rank']}. [{r['score']}] {r['title']}")
+    print(f"    {r['abstract'][:150]}...")
+    print()
+2. Add a results difference summary cell — this gives you a clean number to cite in your report:
+
+python
+# How often does POS weighting change the top result?
+queries = [
+    "deep learning image classification",
+    "neural network optimisation", 
+    "natural language processing transformer",
+    "reinforcement learning robotics",
+    "graph neural network node classification",
+    "convolutional network object detection"
+]
+
+changes = 0
+for q in queries:
+    b = search_baseline(q, top_k=1)[0]['title']
+    p = search(q, top_k=1)[0]['title']
+    if b != p:
+        changes += 1
+        print(f"CHANGED: '{q}'")
+        print(f"  Baseline: {b[:60]}")
+        print(f"  POS:      {p[:60]}")
+        print()
+
+print(f"Top result changed in {changes}/{len(queries)} queries ({round(changes/len(queries)*100)}%)")
+You're ready for click-through re-ranking
+The notebook is solid. Fix the cell order, add those two cells, and you're ready to implement the click-through layer. This is the final algorithmic piece before building the UI. Ready to go?
+
+Files hidden in shared chats
+what do you think, can i move on or is there anything else to change
+
+Mar 31
+
+Reading the latest notebook
+Reading the latest notebook
+This is in excellent shape — genuinely strong work. Here's the full picture:
+
+Everything is working correctly ✓
+Cell order fixed — search_baseline now defined before it's called
+Abstract snippets showing in results
+Difference summary running perfectly
+No errors anywhere
+Your headline result is strong
+POS weighting changed the top result in 4 out of 6 queries (67%) — that's a compelling finding. Two of those changes are particularly defensible in your report:
+
+"graph neural network node classification" → baseline returned "Building a Chaotic Proved Neural Network" (irrelevant), POS returned "Node Classification in Social Networks" (directly relevant). This is your strongest example.
+"deep learning image classification" → baseline returned an SVM paper, POS returned a hyperspectral image classification paper. Clear improvement.
+Screenshot these outputs — they go straight into your Results and Discussion section as Table 1.
+
+One honest observation to note in your report
+The "natural language processing transformer" query still returns linguistically-themed papers rather than ML transformer papers — this is because your dataset is 70% from 2015, before BERT/transformers existed in the literature. This is worth one sentence in your limitations section: "the temporal skew of the dataset toward pre-2017 papers limits retrieval quality for queries about post-2017 techniques such as transformer architectures." Saying this proactively is much better than Omar asking why transformer queries return odd results.
+
+You're ready — move on to click-through re-ranking
+The notebook is clean, all outputs are saved, results are strong. Here's the full click-through implementation to add as your next cells:
+
+Cell 35 — Click store
+python
+# Click-through re-ranking store
+# Tracks how many times a document was clicked for a given query
+
+from collections import defaultdict
+
+# Structure: {normalised_query_string: {doc_id: click_count}}
+click_store = defaultdict(lambda: defaultdict(int))
+
+def normalise_query(query):
+    """Normalise query the same way as search pipeline for consistent keys"""
+    q = query.lower()
+    q = remove_punctuation(q)
+    q = re.sub(r'\d+', '', q)
+    tokens = word_tokenize(q)
+    tokens = [t for t in tokens if t not in stop_words]
+    tokens = [stemmer.stem(t) for t in tokens]
+    return ' '.join(sorted(tokens))  # sorted so "learning deep" == "deep learning"
+
+def record_click(query, doc_id):
+    """Call this when a user clicks a result"""
+    key = normalise_query(query)
+    click_store[key][doc_id] += 1
+    print(f"Recorded click: query='{key}' doc='{doc_id}'")
+
+def get_click_score(query, doc_id):
+    """Returns normalised click score for a doc given a query"""
+    key = normalise_query(query)
+    clicks = click_store[key]
+    if not clicks or doc_id not in clicks:
+        return 0.0
+    max_clicks = max(clicks.values())
+    return clicks[doc_id] / max_clicks  # normalise to 0-1
+
+print("Click store initialised")
+Cell 36 — Click-boosted search
+python
+def search_with_clicks(query, top_k=10, alpha=0.7):
+    """
+    Blended ranking: alpha * cosine_score + (1-alpha) * click_score
+    alpha=0.7 keeps retrieval quality dominant but surfaces popular results
+    """
+    # Step 1 — get base cosine scores
+    query_clean = query.lower()
+    query_clean = remove_punctuation(query_clean)
+    query_clean = re.sub(r'\d+', '', query_clean)
+    query_tokens = word_tokenize(query_clean)
+    query_tokens = [t for t in query_tokens if t not in stop_words]
+    query_tokens = [stemmer.stem(t) for t in query_tokens]
+    query_processed = ' '.join(query_tokens)
+
+    query_vec = vectorizer.transform([query_processed])
+    query_vec_pos = query_vec.dot(pos_weight_diag)
+
+    from sklearn.metrics.pairwise import cosine_similarity
+    cosine_scores = cosine_similarity(query_vec_pos, tfidf_pos_matrix).flatten()
+
+    # Step 2 — blend with click scores
+    blended_scores = []
+    for idx in range(len(doc_ids)):
+        doc_id = doc_ids[idx]
+        cosine = cosine_scores[idx]
+        click = get_click_score(query, doc_id)
+        blended = alpha * cosine + (1 - alpha) * click
+        blended_scores.append(blended)
+
+    blended_scores = np.array(blended_scores)
+    top_indices = blended_scores.argsort()[::-1][:top_k]
+
+    results = []
+    for rank, idx in enumerate(top_indices, 1):
+        doc_id = doc_ids[idx]
+        click_s = get_click_score(query, doc_id)
+        results.append({
+            'rank': rank,
+            'id': doc_id,
+            'title': doc_titles[idx],
+            'abstract': doc_abstracts[idx][:300] + '...',
+            'cosine_score': round(cosine_scores[idx], 4),
+            'click_score': round(click_s, 4),
+            'blended_score': round(blended_scores[idx], 4)
+        })
+
+    return results
+Cell 37 — Demonstrate the click effect
+python
+# Simulate a user scenario — demonstrate click re-ranking working
+
+query = "graph neural network node classification"
+
+print("=== BEFORE ANY CLICKS ===")
+results_before = search_with_clicks(query, top_k=5)
+for r in results_before:
+    print(f"  {r['rank']}. [{r['blended_score']}] {r['title'][:60]}")
+
+# Simulate: user searches, sees results, clicks the 3rd result twice
+clicked_doc_id = results_before[2]['id']
+clicked_doc_title = results_before[2]['title']
+record_click(query, clicked_doc_id)
+record_click(query, clicked_doc_id)
+print(f"\nSimulated 2 clicks on: '{clicked_doc_title[:60]}'")
+
+print("\n=== AFTER CLICKS — same query ===")
+results_after = search_with_clicks(query, top_k=5)
+for r in results_after:
+    marker = " <-- boosted" if r['id'] == clicked_doc_id else ""
+    print(f"  {r['rank']}. [{r['blended_score']}] (cos:{r['cosine_score']} | click:{r['click_score']}) {r['title'][:50]}{marker}")
+Cell 38 — Save the click store
+python
+import pickle
+
+with open('/content/drive/MyDrive/click_store.pkl', 'wb') as f:
+    pickle.dump(dict(click_store), f)
+
+print(f"Click store saved with {len(click_store)} query entries")
+Once those four cells are running, you're done with the core algorithm. The final step after that is a simple Flask or Streamlit UI that ties everything together with a real search box. Ready when you are.
+
+ok lets do it
+
+Mar 31
+Add these four cells to your notebook now and run them in order:
+
+Cell 35 — Click store
+python
+from collections import defaultdict
+
+click_store = defaultdict(lambda: defaultdict(int))
+
+def normalise_query(query):
+    q = query.lower()
+    q = remove_punctuation(q)
+    q = re.sub(r'\d+', '', q)
+    tokens = word_tokenize(q)
+    tokens = [t for t in tokens if t not in stop_words]
+    tokens = [stemmer.stem(t) for t in tokens]
+    return ' '.join(sorted(tokens))
+
+def record_click(query, doc_id):
+    key = normalise_query(query)
+    click_store[key][doc_id] += 1
+    print(f"Recorded click: query='{key}' doc='{doc_id}'")
+
+def get_click_score(query, doc_id):
+    key = normalise_query(query)
+    clicks = click_store[key]
+    if not clicks or doc_id not in clicks:
+        return 0.0
+    max_clicks = max(clicks.values())
+    return clicks[doc_id] / max_clicks
+
+print("Click store initialised")
+Cell 36 — Click-boosted search function
+python
+def search_with_clicks(query, top_k=10, alpha=0.7):
+    """
+    Blended ranking: alpha * cosine_score + (1-alpha) * click_score
+    alpha=0.7 keeps retrieval quality dominant, click signal supplements it
+    """
+    query_clean = query.lower()
+    query_clean = remove_punctuation(query_clean)
+    query_clean = re.sub(r'\d+', '', query_clean)
+    query_tokens = word_tokenize(query_clean)
+    query_tokens = [t for t in query_tokens if t not in stop_words]
+    query_tokens = [stemmer.stem(t) for t in query_tokens]
+    query_processed = ' '.join(query_tokens)
+
+    query_vec = vectorizer.transform([query_processed])
+    query_vec_pos = query_vec.dot(pos_weight_diag)
+
+    from sklearn.metrics.pairwise import cosine_similarity
+    cosine_scores = cosine_similarity(query_vec_pos, tfidf_pos_matrix).flatten()
+
+    blended_scores = np.array([
+        alpha * cosine_scores[i] + (1 - alpha) * get_click_score(query, doc_ids[i])
+        for i in range(len(doc_ids))
+    ])
+
+    top_indices = blended_scores.argsort()[::-1][:top_k]
+
+    return [{
+        'rank': rank,
+        'id': doc_ids[idx],
+        'title': doc_titles[idx],
+        'abstract': doc_abstracts[idx][:300] + '...',
+        'cosine_score': round(float(cosine_scores[idx]), 4),
+        'click_score': round(get_click_score(query, doc_ids[idx]), 4),
+        'blended_score': round(float(blended_scores[idx]), 4)
+    } for rank, idx in enumerate(top_indices, 1)]
+
+print("search_with_clicks() ready")
+Cell 37 — Demonstrate the click effect
+python
+query = "graph neural network node classification"
+
+print("=" * 60)
+print("BEFORE ANY CLICKS")
+print("=" * 60)
+results_before = search_with_clicks(query, top_k=5)
+for r in results_before:
+    print(f"  {r['rank']}. [{r['blended_score']}] {r['title'][:65].replace(chr(10), ' ')}")
+
+# Simulate user clicking the 3rd result twice
+clicked_id    = results_before[2]['id']
+clicked_title = results_before[2]['title'].replace('\n', ' ')
+record_click(query, clicked_id)
+record_click(query, clicked_id)
+print(f"\n  >> Simulated 2 clicks on rank-3: '{clicked_title[:55]}'")
+
+print("\n" + "=" * 60)
+print("AFTER CLICKS — same query, next user")
+print("=" * 60)
+results_after = search_with_clicks(query, top_k=5)
+for r in results_after:
+    tag = "  <-- BOOSTED" if r['id'] == clicked_id else ""
+    print(f"  {r['rank']}. [blend:{r['blended_score']} | cos:{r['cosine_score']} | click:{r['click_score']}] {r['title'][:45].replace(chr(10), ' ')}{tag}")
+
+# Confirm rank change
+rank_before = next(r['rank'] for r in results_before if r['id'] == clicked_id)
+rank_after  = next(r['rank'] for r in results_after  if r['id'] == clicked_id)
+print(f"\n  Rank moved: {rank_before} --> {rank_after}")
+Cell 38 — Save click store
+python
+import pickle
+
+with open('/content/drive/MyDrive/click_store.pkl', 'wb') as f:
+    pickle.dump(dict({k: dict(v) for k, v in click_store.items()}), f)
+
+print(f"Click store saved — {len(click_store)} query entries recorded")
+Run all four and paste the output from cell 37 here. What you're looking for is the clicked document moving up in rank — that's your proof the system works and the core demo for your viva. Once confirmed we'll move straight into the UI.
+
+=== BEFORE ANY CLICKS ===   1. [0.3368] Node Classification in Social Networks   2. [0.2626] Building a Chaotic Proved Neural Network   3. [0.2567] Large-scale Multi-label Text Classification - Revisiting Neu   4. [0.2544] Time series forecasting using neural networks   5. [0.2515] Fast and Scalable Analysis of Massive Social Graphs Recorded click: query='classif graph network neural node' doc='1312.5419' Recorded click: query='classif graph network neural node' doc='1312.5419'  Simulated 2 clicks on: 'Large-scale Multi-label Text Classification - Revisiting Neu'  === AFTER CLICKS — same query ===   1. [0.5567] (cos:0.3666 | click:1.0) Large-scale Multi-label Text Classification - Revi <-- boosted   2. [0.3368] (cos:0.4812 | click:0.0) Node Classification in Social Networks   3. [0.2626] (cos:0.3751 | click:0.0) Building a Chaotic Proved Neural Network   4. [0.2544] (cos:0.3634 | click:0.0) Time series forecasting using neural networks   5. [0.2515] (cos:0.3592 | click:0.0) Fast and Scalable Analysis of Massive Social Graph
+
+Show more
+Mar 31
+The click-through re-ranking is working perfectly. Look at what happened:
+
+Rank 3 → Rank 1 after just 2 clicks
+Blended score jumped from 0.2567 to 0.5567 — more than doubled
+All other documents kept their cosine scores unchanged
+The click:1.0 confirms the normalisation is working correctly
+This is exactly the behaviour your notes describe as the "focal point" of the search engine. Screenshot this output — it's your strongest viva demo moment.
+
+One thing to note for your report
+The boost is quite aggressive — rank 3 jumps straight to rank 1 above even the most relevant document. This is because alpha=0.7 with a click:1.0 score adds 0.3 × 1.0 = 0.30 to the blended score, which is large enough to overpower the cosine difference. In your report, discuss this as a tunable parameter:
+
+alpha=0.9 → cosine dominates, clicks only break ties
+alpha=0.7 → current, clicks can promote results significantly
+alpha=0.5 → equal weight, popularity and relevance balanced
+Add this evaluation cell to show Omar you thought about it:
+
+python
+# Alpha sensitivity analysis
+query = "graph neural network node classification"
+
+# Reset and add some clicks first
+record_click(query, results_before[2]['id'])
+record_click(query, results_before[2]['id'])
+
+print(f"{'Alpha':<8} {'Rank-1 Title':<55} {'Boosted doc rank'}")
+print("-" * 80)
+for alpha in [0.5, 0.6, 0.7, 0.8, 0.9]:
+    top = search_with_clicks(query, top_k=10, alpha=alpha)
+    rank1 = top[0]['title'][:50].replace('\n', ' ')
+    boosted_rank = next((r['rank'] for r in top if r['id'] == clicked_id), 'N/A')
+    print(f"{alpha:<8} {rank1:<55} {boosted_rank}")
+You're ready for the UI
+Your complete pipeline now has three layers, which maps perfectly to your report's methodology block diagram:
+
+POS-weighted TF-IDF — method-aware indexing
+Cosine similarity ranking — vector space retrieval
+Click-through re-ranking — learned user preference
+Now let's build the UI. Two options — pick whichever suits you:
+
+Files hidden in shared chats
+before we proceed, im getting an error with the new cell i added. check it out  and tell me how to resolve :
+
+Mar 31
+
+Reading the new cells and their error outputs
+Reading the new cells and their error outputs
+Simple fix — the alpha sensitivity cell uses clicked_id but that variable was named clicked_doc_id in cell 37. Just replace one word. Fix cell 38 like this:
+
+python
+# Alpha sensitivity analysis
+query = "graph neural network node classification"
+
+# Use the correct variable name from cell 37
+record_click(query, clicked_doc_id)
+record_click(query, clicked_doc_id)
+
+print(f"{'Alpha':<8} {'Rank-1 Title':<55} {'Boosted doc rank'}")
+print("-" * 80)
+for alpha in [0.5, 0.6, 0.7, 0.8, 0.9]:
+    top = search_with_clicks(query, top_k=10, alpha=alpha)
+    rank1 = top[0]['title'][:50].replace('\n', ' ')
+    boosted_rank = next((r['rank'] for r in top if r['id'] == clicked_doc_id), 'N/A')
+    print(f"{alpha:<8} {rank1:<55} {boosted_rank}")
+The only change is clicked_id → clicked_doc_id on the record_click line and inside the next() call. Run it and you should see a clean table showing how the boosted document's rank changes as alpha varies from 0.5 to 0.9.
+
+ok lets proceed with the ui, simple but effective. do not go too complex this is meant to be a university assignment
+
+Mar 31
+Given it's a university assignment, Streamlit is the right call — less code, runs directly in Colab, and looks clean enough to demo in a viva. Here's the complete UI:
+
+Step 1 — Install Streamlit in Colab
+Add this as a new cell in your notebook:
+
+python
+!pip install streamlit pyngrok -q
+Step 2 — Write the app file
+Add this as the next cell — it writes the entire Streamlit app to a file:
+
+python
+app_code = '''
+import streamlit as st
+import pickle
+import scipy.sparse as sp
+import numpy as np
+import re
+import nltk
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+from nltk.stem import PorterStemmer
+from sklearn.metrics.pairwise import cosine_similarity
+from collections import defaultdict
+
+nltk.download("punkt", quiet=True)
+nltk.download("punkt_tab", quiet=True)
+nltk.download("stopwords", quiet=True)
+
+# ── Load index ──────────────────────────────────────────────
+@st.cache_resource
+def load_index():
+    with open("/content/drive/MyDrive/vectorizer.pkl", "rb") as f:
+        vectorizer = pickle.load(f)
+    with open("/content/drive/MyDrive/pos_weight_vector.pkl", "rb") as f:
+        pos_weight_vector = pickle.load(f)
+    with open("/content/drive/MyDrive/doc_ids.pkl", "rb") as f:
+        doc_ids = pickle.load(f)
+    with open("/content/drive/MyDrive/doc_titles.pkl", "rb") as f:
+        doc_titles = pickle.load(f)
+    with open("/content/drive/MyDrive/doc_abstracts.pkl", "rb") as f:
+        doc_abstracts = pickle.load(f)
+    tfidf_pos_matrix = sp.load_npz("/content/drive/MyDrive/tfidf_pos_matrix.npz")
+    try:
+        with open("/content/drive/MyDrive/click_store.pkl", "rb") as f:
+            click_store = defaultdict(lambda: defaultdict(int), pickle.load(f))
+    except:
+        click_store = defaultdict(lambda: defaultdict(int))
+    import scipy.sparse as sp2
+    pos_weight_diag = sp2.diags(pos_weight_vector)
+    return vectorizer, pos_weight_diag, doc_ids, doc_titles, doc_abstracts, tfidf_pos_matrix, click_store
+
+vectorizer, pos_weight_diag, doc_ids, doc_titles, doc_abstracts, tfidf_pos_matrix, click_store = load_index()
+
+stop_words = set(stopwords.words("english"))
+stemmer = PorterStemmer()
+
+# ── Helpers ──────────────────────────────────────────────────
+def preprocess(text):
+    text = text.lower()
+    text = re.sub(r"[^\\w\\s\\-]", "", text)
+    text = re.sub(r"\\d+", "", text)
+    tokens = word_tokenize(text)
+    tokens = [t for t in tokens if t not in stop_words and t.strip()]
+    tokens = [stemmer.stem(t) for t in tokens]
+    return " ".join(tokens)
+
+def normalise_query(query):
+    tokens = preprocess(query).split()
+    return " ".join(sorted(tokens))
+
+def get_click_score(query, doc_id):
+    key = normalise_query(query)
+    clicks = click_store[key]
+    if not clicks or doc_id not in clicks:
+        return 0.0
+    return clicks[doc_id] / max(clicks.values())
+
+def search(query, top_k=10, alpha=0.7):
+    processed = preprocess(query)
+    query_vec = vectorizer.transform([processed])
+    query_vec_pos = query_vec.dot(pos_weight_diag)
+    cosine_scores = cosine_similarity(query_vec_pos, tfidf_pos_matrix).flatten()
+    blended = np.array([
+        alpha * cosine_scores[i] + (1 - alpha) * get_click_score(query, doc_ids[i])
+        for i in range(len(doc_ids))
+    ])
+    top_indices = blended.argsort()[::-1][:top_k]
+    return [{
+        "rank": r + 1,
+        "id": doc_ids[i],
+        "title": doc_titles[i],
+        "abstract": doc_abstracts[i],
+        "score": round(float(blended[i]), 4),
+        "cosine": round(float(cosine_scores[i]), 4),
+        "click": round(get_click_score(query, doc_ids[i]), 4),
+    } for r, i in enumerate(top_indices)]
+
+def record_click(query, doc_id):
+    key = normalise_query(query)
+    click_store[key][doc_id] += 1
+    with open("/content/drive/MyDrive/click_store.pkl", "wb") as f:
+        pickle.dump(dict({k: dict(v) for k, v in click_store.items()}), f)
+
+# ── UI ───────────────────────────────────────────────────────
+st.set_page_config(page_title="CS Paper Search", page_icon="🔍", layout="wide")
+
+st.title("🔍 Method-Aware Search Engine")
+st.caption("CS Research Papers · POS-weighted TF-IDF · Click-through Re-ranking")
+st.divider()
+
+col1, col2 = st.columns([4, 1])
+with col1:
+    query = st.text_input("Search", placeholder="e.g. graph neural network node classification")
+with col2:
+    top_k = st.selectbox("Results", [5, 10, 20], index=1)
+
+if query:
+    results = search(query, top_k=top_k)
+    
+    if not results or results[0]["score"] == 0:
+        st.warning("No results found. Try different keywords.")
+    else:
+        st.markdown(f"**{len(results)} results** for *\"{query}\"*")
+        st.divider()
+
+        for r in results:
+            with st.container():
+                col_rank, col_content = st.columns([1, 11])
+                
+                with col_rank:
+                    st.markdown(f"### {r['rank']}")
+                
+                with col_content:
+                    # Clickable title
+                    if st.button(f"{r['title'].replace(chr(10), ' ')}", key=f"btn_{r['id']}"):
+                        record_click(query, r["id"])
+                        st.toast(f"Recorded click for: {r['title'][:40]}...")
+                    
+                    # Abstract snippet
+                    st.caption(r["abstract"][:250].replace("\\n", " ") + "...")
+                    
+                    # Score breakdown
+                    score_col1, score_col2, score_col3, score_col4 = st.columns(4)
+                    with score_col1:
+                        st.metric("Score", r["score"])
+                    with score_col2:
+                        st.metric("Cosine", r["cosine"])
+                    with score_col3:
+                        st.metric("Click boost", r["click"])
+                    with score_col4:
+                        st.metric("Doc ID", r["id"])
+                
+                st.divider()
+'''
+
+with open("search_app.py", "w") as f:
+    f.write(app_code)
+
+print("search_app.py written successfully")
+Step 3 — Launch the app
+Add this as the final cell:
+
+python
+from pyngrok import ngrok
+import subprocess, time
+
+# Kill any existing tunnels
+ngrok.kill()
+
+# Start Streamlit in background
+proc = subprocess.Popen(
+    ["streamlit", "run", "search_app.py",
+     "--server.port=8501",
+     "--server.headless=true"],
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL
+)
+
+time.sleep(4)
+
+# Create public tunnel
+public_url = ngrok.connect(8501)
+print("=" * 50)
+print(f"  Open your search engine here:")
+print(f"  {public_url}")
+print("=" * 50)
+Run all three cells in order. You'll get a public URL — open it and you'll see a working search interface with:
+
+A search box and results count selector
+Ranked results with title, abstract snippet and score breakdown
+Clickable titles that record clicks and update re-ranking in real time
+Cosine, click boost, and blended score shown per result so you can demonstrate the algorithm live in your viva
+The score breakdown per result is particularly useful for your viva — Omar can see exactly how the blending is working for each document. Let me know when it's running.
+
+HTTPError                                 Traceback (most recent call last)
+/usr/local/lib/python3.12/dist-packages/pyngrok/installer.py in install_ngrok(ngrok_path, ngrok_version, **kwargs)
+    189     try:
+--> 190         download_path = _download_file(url, **kwargs)
+    191
+12 frames
+
+/usr/local/lib/python3.12/dist-packages/pyngrok/installer.py in _download_file(url, retries, **kwargs)
+    384         else:
+--> 385             raise e
+    386
+/usr/local/lib/python3.12/dist-packages/pyngrok/installer.py in _download_file(url, retries, **kwargs)
+    342         local_filename = url.split("/")[-1]
+--> 343         response = urlopen(url, **kwargs)
+    344
+/usr/lib/python3.12/urllib/request.py in urlopen(url, data, timeout, cafile, capath, cadefault, context)
+    214         opener = _opener
+--> 215     return opener.open(url, data, timeout)
+    216
+/usr/lib/python3.12/urllib/request.py in open(self, fullurl, data, timeout)
+    520             meth = getattr(processor, meth_name)
+--> 521             response = meth(req, response)
+    522
+/usr/lib/python3.12/urllib/request.py in http_response(self, request, response)
+    629         if not (200 <= code < 300):
+--> 630             response = self.parent.error(
+    631                 'http', request, response, code, msg, hdrs)
+/usr/lib/python3.12/urllib/request.py in error(self, proto, *args)
+    558             args = (dict, 'default', 'http_error_default') + orig_args
+--> 559             return self._call_chain(*args)
+    560
+/usr/lib/python3.12/urllib/request.py in _call_chain(self, chain, kind, meth_name, *args)
+    491             func = getattr(handler, meth_name)
+--> 492             result = func(*args)
+    493             if result is not None:
+/usr/lib/python3.12/urllib/request.py in http_error_default(self, req, fp, code, msg, hdrs)
+    638     def http_error_default(self, req, fp, code, msg, hdrs):
+--> 639         raise HTTPError(req.full_url, code, msg, hdrs, fp)
+    640
+HTTPError: HTTP Error 403: Forbidden
+During handling of the above exception, another exception occurred:
+PyngrokNgrokInstallError                  Traceback (most recent call last)
+/tmp/ipykernel_2751/3564435752.py in <cell line: 0>()
+     17 
+     18 # Create public tunnel
+---> 19 public_url = ngrok.connect(8501)
+     20 print("=" * 50)
+     21 print(f"  Open your search engine here:")
+/usr/local/lib/python3.12/dist-packages/pyngrok/ngrok.py in connect(addr, proto, name, pyngrok_config, **options)
+    333     logger.info(f"Opening tunnel named: {name}")
+    334 
+--> 335     api_url = get_ngrok_process(pyngrok_config).api_url
+    336 
+    337     logger.debug(f"Creating tunnel with options: {options}")
+/usr/local/lib/python3.12/dist-packages/pyngrok/ngrok.py in get_ngrok_process(pyngrok_config)
+    198         pyngrok_config = conf.get_default()
+    199 
+--> 200     install_ngrok(pyngrok_config)
+    201 
+    202     return process.get_process(pyngrok_config)
+/usr/local/lib/python3.12/dist-packages/pyngrok/ngrok.py in install_ngrok(pyngrok_config)
+    126 
+    127     if not os.path.exists(pyngrok_config.ngrok_path):
+--> 128         installer.install_ngrok(pyngrok_config.ngrok_path, ngrok_version=pyngrok_config.ngrok_version)
+    129 
+    130     config_path = conf.get_config_path(pyngrok_config)
+/usr/local/lib/python3.12/dist-packages/pyngrok/installer.py in install_ngrok(ngrok_path, ngrok_version, **kwargs)
+    192         _install_ngrok_zip(ngrok_path, download_path)
+    193     except Exception as e:
+--> 194         raise PyngrokNgrokInstallError(f"An error occurred while downloading ngrok from {url}: {e}")
+    195 
+    196
+PyngrokNgrokInstallError: An error occurred while downloading ngrok from https://bin.ngrok.com/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.zip: HTTP Error 403: Forbidden
+Show more
+Mar 31
+ngrok is blocking the download in Colab. Use localtunnel instead — no account needed, works fine in Colab. Replace your launch cell with this:
+
+python
+import subprocess
+import time
+import threading
+
+# Install localtunnel
+subprocess.run(["npm", "install", "-g", "localtunnel"], capture_output=True)
+
+# Start Streamlit in background
+proc = subprocess.Popen(
+    ["streamlit", "run", "search_app.py",
+     "--server.port=8501",
+     "--server.headless=true"],
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL
+)
+
+time.sleep(4)
+
+# Get your Colab's external IP (needed to confirm the tunnel)
+ip_result = subprocess.run(["wget", "-q", "-O", "-", "https://ipv4.icanhazip.com"],
+                           capture_output=True, text=True)
+print(f"Your IP (use this to confirm the tunnel): {ip_result.stdout.strip()}")
+
+# Start localtunnel
+tunnel = subprocess.Popen(
+    ["lt", "--port", "8501"],
+    stdout=subprocess.PIPE,
+    stderr=subprocess.DEVNULL,
+    text=True
+)
+
+# Read the URL from output
+for line in tunnel.stdout:
+    if "https://" in line:
+        print("=" * 50)
+        print(f"  Open your search engine here:")
+        print(f"  {line.strip()}")
+        print("=" * 50)
+        print("\n  NOTE: When the page loads, it will ask")
+        print("  for a password — enter the IP shown above.")
+        break
+Run that and you'll get a https:// URL. When you open it, localtunnel shows a password screen — just paste the IP address it printed above into that box and you're straight into your search engine.
+
+File "/content/search_app.py", line 112
+          st.markdown(f"**{len(results)} results** for *"{query}"*")
+                      ^
+SyntaxError: invalid syntax. Perhaps you forgot a comma?
+
+Mar 31
+The issue is the quotes inside the f-string clashing with each other. The " around {query} is breaking the string. Fix the app_code cell — find this line in the string:
+
+python
+st.markdown(f"**{len(results)} results** for *"{query}"*")
+And replace it with:
+
+python
+st.markdown(f'**{len(results)} results** for *"{query}"*')
+The simplest fix is to just rewrite the entire app_code cell — replace it with this version which uses single quotes for that line to avoid the clash:
+
+python
+app_code = '''
+import streamlit as st
+import pickle
+import scipy.sparse as sp
+import numpy as np
+import re
+import nltk
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+from nltk.stem import PorterStemmer
+from sklearn.metrics.pairwise import cosine_similarity
+from collections import defaultdict
+
+nltk.download("punkt", quiet=True)
+nltk.download("punkt_tab", quiet=True)
+nltk.download("stopwords", quiet=True)
+
+@st.cache_resource
+def load_index():
+    with open("/content/drive/MyDrive/vectorizer.pkl", "rb") as f:
+        vectorizer = pickle.load(f)
+    with open("/content/drive/MyDrive/pos_weight_vector.pkl", "rb") as f:
+        pos_weight_vector = pickle.load(f)
+    with open("/content/drive/MyDrive/doc_ids.pkl", "rb") as f:
+        doc_ids = pickle.load(f)
+    with open("/content/drive/MyDrive/doc_titles.pkl", "rb") as f:
+        doc_titles = pickle.load(f)
+    with open("/content/drive/MyDrive/doc_abstracts.pkl", "rb") as f:
+        doc_abstracts = pickle.load(f)
+    tfidf_pos_matrix = sp.load_npz("/content/drive/MyDrive/tfidf_pos_matrix.npz")
+    try:
+        with open("/content/drive/MyDrive/click_store.pkl", "rb") as f:
+            click_store = defaultdict(lambda: defaultdict(int), pickle.load(f))
+    except:
+        click_store = defaultdict(lambda: defaultdict(int))
+    import scipy.sparse as sp2
+    pos_weight_diag = sp2.diags(pos_weight_vector)
+    return vectorizer, pos_weight_diag, doc_ids, doc_titles, doc_abstracts, tfidf_pos_matrix, click_store
+
+vectorizer, pos_weight_diag, doc_ids, doc_titles, doc_abstracts, tfidf_pos_matrix, click_store = load_index()
+
+stop_words = set(stopwords.words("english"))
+stemmer = PorterStemmer()
+
+def preprocess(text):
+    text = text.lower()
+    text = re.sub(r"[^\\w\\s\\-]", "", text)
+    text = re.sub(r"\\d+", "", text)
+    tokens = word_tokenize(text)
+    tokens = [t for t in tokens if t not in stop_words and t.strip()]
+    tokens = [stemmer.stem(t) for t in tokens]
+    return " ".join(tokens)
+
+def normalise_query(query):
+    tokens = preprocess(query).split()
+    return " ".join(sorted(tokens))
+
+def get_click_score(query, doc_id):
+    key = normalise_query(query)
+    clicks = click_store[key]
+    if not clicks or doc_id not in clicks:
+        return 0.0
+    return clicks[doc_id] / max(clicks.values())
+
+def search(query, top_k=10, alpha=0.7):
+    processed = preprocess(query)
+    query_vec = vectorizer.transform([processed])
+    query_vec_pos = query_vec.dot(pos_weight_diag)
+    cosine_scores = cosine_similarity(query_vec_pos, tfidf_pos_matrix).flatten()
+    blended = np.array([
+        alpha * cosine_scores[i] + (1 - alpha) * get_click_score(query, doc_ids[i])
+        for i in range(len(doc_ids))
+    ])
+    top_indices = blended.argsort()[::-1][:top_k]
+    return [{
+        "rank": r + 1,
+        "id": doc_ids[i],
+        "title": doc_titles[i],
+        "abstract": doc_abstracts[i],
+        "score": round(float(blended[i]), 4),
+        "cosine": round(float(cosine_scores[i]), 4),
+        "click": round(get_click_score(query, doc_ids[i]), 4),
+    } for r, i in enumerate(top_indices)]
+
+def record_click(query, doc_id):
+    key = normalise_query(query)
+    click_store[key][doc_id] += 1
+    with open("/content/drive/MyDrive/click_store.pkl", "wb") as f:
+        pickle.dump(dict({k: dict(v) for k, v in click_store.items()}), f)
+
+st.set_page_config(page_title="CS Paper Search", page_icon="🔍", layout="wide")
+
+st.title("🔍 Method-Aware Search Engine")
+st.caption("CS Research Papers · POS-weighted TF-IDF · Click-through Re-ranking")
+st.divider()
+
+col1, col2 = st.columns([4, 1])
+with col1:
+    query = st.text_input("Search", placeholder="e.g. graph neural network node classification")
+with col2:
+    top_k = st.selectbox("Results", [5, 10, 20], index=1)
+
+if query:
+    results = search(query, top_k=top_k)
+
+    if not results or results[0]["score"] == 0:
+        st.warning("No results found. Try different keywords.")
+    else:
+        st.markdown(f\'**{len(results)} results** for *"{query}"*\')
+        st.divider()
+
+        for r in results:
+            with st.container():
+                col_rank, col_content = st.columns([1, 11])
+
+                with col_rank:
+                    st.markdown(f"### {r[\'rank\']}")
+
+                with col_content:
+                    if st.button(f"{r[\'title\'].replace(chr(10), \' \')}", key=f"btn_{r[\'id\']}"):
+                        record_click(query, r["id"])
+                        st.toast(f"Click recorded — results will re-rank on next search")
+
+                    st.caption(r["abstract"][:250].replace("\\n", " ") + "...")
+
+                    score_col1, score_col2, score_col3, score_col4 = st.columns(4)
+                    with score_col1:
+                        st.metric("Score", r["score"])
+                    with score_col2:
+                        st.metric("Cosine", r["cosine"])
+                    with score_col3:
+                        st.metric("Click boost", r["click"])
+                    with score_col4:
+                        st.metric("Doc ID", r["id"])
+
+                st.divider()
+'''
+
+with open("search_app.py", "w") as f:
+    f.write(app_code)
+
+print("search_app.py written successfully")
+After running this cell successfully, re-run the launch cell and it should start cleanly.
+
+Files hidden in shared chats
+Mar 31
+Good progress — the page is loading and the title is showing, which means Streamlit and the tunnel are both working. The Failed to fetch dynamically imported module error is a known localtunnel issue where the browser blocks some JS files from loading across the tunnel. Easy fix — add --cors to the Streamlit config. Replace your launch cell with this:
+
+python
+import subprocess
+import time
+
+# Kill anything already running
+subprocess.run(["pkill", "-f", "streamlit"], capture_output=True)
+subprocess.run(["pkill", "-f", "lt --port"], capture_output=True)
+time.sleep(2)
+
+# Start Streamlit with CORS disabled
+proc = subprocess.Popen(
+    ["streamlit", "run", "search_app.py",
+     "--server.port=8501",
+     "--server.headless=true",
+     "--server.enableCORS=false",
+     "--server.enableXsrfProtection=false"],
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL
+)
+
+time.sleep(5)
+
+# Get IP for tunnel password
+ip_result = subprocess.run(
+    ["wget", "-q", "-O", "-", "https://ipv4.icanhazip.com"],
+    capture_output=True, text=True
+)
+colab_ip = ip_result.stdout.strip()
+print(f"Tunnel password (your IP): {colab_ip}")
+
+# Start localtunnel
+tunnel = subprocess.Popen(
+    ["lt", "--port", "8501"],
+    stdout=subprocess.PIPE,
+    stderr=subprocess.DEVNULL,
+    text=True
+)
+
+for line in tunnel.stdout:
+    if "https://" in line:
+        print("=" * 50)
+        print(f"  URL: {line.strip()}")
+        print(f"  Password: {colab_ip}")
+        print("=" * 50)
+        break
+Run that, open the new URL, enter the IP as the password, and the JS modules should load correctly. If you still see the error on first load, just do a hard refresh (Ctrl+Shift+R) — localtunnel sometimes needs one extra reload to fully initialise the connection.
+
+Files hidden in shared chats
+im getting the same error, heres my notebook
+
+Mar 31
+
+Reading the UI cells of the notebook
+Reading the UI cells of the notebook
+The tunnel and Streamlit are both running fine — the JS fetch error is purely a localtunnel browser issue, not a code problem. The fix is to skip localtunnel entirely and use Streamlit's built-in Colab sharing instead, which is the most reliable method. Replace cells 42 with this:
+
+python
+import subprocess
+import time
+
+# Kill anything already running
+subprocess.run(["pkill", "-f", "streamlit"], capture_output=True)
+time.sleep(2)
+
+# Start Streamlit
+proc = subprocess.Popen(
+    ["streamlit", "run", "search_app.py",
+     "--server.port=8501",
+     "--server.headless=true",
+     "--server.enableCORS=false",
+     "--server.enableXsrfProtection=false"],
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,
+    text=True
+)
+
+time.sleep(3)
+print("Streamlit started, setting up tunnel...")
+Then add a new cell after it:
+
+python
+# Use cloudflared — most reliable tunnel for Colab
+!wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O cloudflared
+!chmod +x cloudflared
+
+import subprocess, time, threading
+
+tunnel = subprocess.Popen(
+    ["./cloudflared", "tunnel", "--url", "http://localhost:8501"],
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,
+    text=True
+)
+
+# Read output until we find the URL
+print("Waiting for tunnel URL...")
+for line in tunnel.stdout:
+    print(line.strip())  # print all output so you can see what's happening
+    if "trycloudflare.com" in line:
+        # Extract just the URL
+        import re
+        match = re.search(r'https://[^\s]+trycloudflare\.com', line)
+        if match:
+            print("\n" + "=" * 50)
+            print(f"  Open your search engine here:")
+            print(f"  {match.group()}")
+            print("=" * 50)
+            break
+Cloudflare's tunnel (trycloudflare.com) doesn't have the JS blocking issue that localtunnel has, requires no account, and is much more stable in Colab. Run both cells and you should get a clean URL with no fetch errors.
+
+I want to have different sorting options, would flask give me a nicer result. is it posisble to run this locally
+
+Mar 31
+Yes — Flask gives you much more control over the UI and running it locally is actually simpler and more reliable than any Colab tunnel. You just run it on your own machine.
+
+A few quick questions first so I build exactly what you need:
+
+Q: What sorting options do you want? (Select all that apply)
+A: Newest papers first (by year), Click popularity, Relevance (cosine score), Blended score (default)
+
+Q: Do you have Python installed locally on your machine?
+A: Not sure / need to check
+
+Mar 31
+Check if Python is installed by opening a terminal (Windows: press Win+R, type cmd, press Enter) and running:
+
+python --version
+If you get a version number back, you're good. If you get an error, download Python from python.org/downloads — get version 3.10 or higher.
+
+Also run this to check pip:
+
+pip --version
+Let me know what you get back and I'll give you the exact setup steps plus the full Flask app with all four sorting options built in.
+
+C:\Users\tapa03>python --version
+Python 3.13.12
+C:\Users\tapa03>pip --version
+pip 25.3 from C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3312.0_x64__qbz5n2kfra8p0\Lib\site-packages\pip (python 3.13)
+C:\Users\tapa03>
+
+Mar 31
+Perfect, Python 3.13 and pip are both working. Here's the full setup:
+
+Step 1 — Download your pickle files from Google Drive
+You need to copy these 7 files from your Google Drive to a folder on your laptop. In Colab, run this cell to find them:
+
+python
+import os
+files = [
+    'vectorizer.pkl', 'pos_weight_vector.pkl', 'doc_ids.pkl',
+    'doc_titles.pkl', 'doc_abstracts.pkl', 'tfidf_pos_matrix.npz',
+    'tfidf_base_matrix.npz', 'click_store.pkl'
+]
+for f in files:
+    path = f'/content/drive/MyDrive/{f}'
+    exists = os.path.exists(path)
+    print(f"{'✓' if exists else '✗'} {f}")
+Then download each one from Google Drive to your laptop. Create a folder called search_engine somewhere easy like C:\Users\tapa03\search_engine and put all the files in there.
+
+Step 2 — Install dependencies
+Open your terminal and run:
+
+pip install flask scikit-learn scipy nltk numpy
+Then open Python and download the NLTK data once:
+
+python -c "import nltk; nltk.download('punkt'); nltk.download('punkt_tab'); nltk.download('stopwords'); nltk.download('averaged_perceptron_tagger')"
+Step 3 — Create the Flask app
+Inside your search_engine folder, create a file called app.py and paste this entire code in:
+
+python
+from flask import Flask, render_template, request, jsonify
+import pickle
+import scipy.sparse as sp
+import numpy as np
+import re
+import nltk
+import os
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+from nltk.stem import PorterStemmer
+from sklearn.metrics.pairwise import cosine_similarity
+from collections import defaultdict
+
+app = Flask(__name__)
+
+# ── Paths ────────────────────────────────────────────────────
+BASE = os.path.dirname(os.path.abspath(__file__))
+
+def load_index():
+    with open(f'{BASE}/vectorizer.pkl', 'rb') as f:
+        vectorizer = pickle.load(f)
+    with open(f'{BASE}/pos_weight_vector.pkl', 'rb') as f:
+        pos_weight_vector = pickle.load(f)
+    with open(f'{BASE}/doc_ids.pkl', 'rb') as f:
+        doc_ids = pickle.load(f)
+    with open(f'{BASE}/doc_titles.pkl', 'rb') as f:
+        doc_titles = pickle.load(f)
+    with open(f'{BASE}/doc_abstracts.pkl', 'rb') as f:
+        doc_abstracts = pickle.load(f)
+    tfidf_matrix     = sp.load_npz(f'{BASE}/tfidf_base_matrix.npz')
+    tfidf_pos_matrix = sp.load_npz(f'{BASE}/tfidf_pos_matrix.npz')
+    try:
+        with open(f'{BASE}/click_store.pkl', 'rb') as f:
+            raw = pickle.load(f)
+        click_store = defaultdict(lambda: defaultdict(int), {k: defaultdict(int, v) for k, v in raw.items()})
+    except:
+        click_store = defaultdict(lambda: defaultdict(int))
+
+    # load year from doc_ids (arXiv IDs encode year in first 4 chars e.g. 1507.xxxxx = 2015)
+    doc_years = []
+    for doc_id in doc_ids:
+        try:
+            prefix = str(doc_id)[:4]
+            yr = int('20' + prefix[:2]) if int(prefix[:2]) < 50 else int('19' + prefix[:2])
+            doc_years.append(yr)
+        except:
+            doc_years.append(0)
+
+    pos_weight_diag = sp.diags(pos_weight_vector)
+    return vectorizer, pos_weight_diag, doc_ids, doc_titles, doc_abstracts, tfidf_matrix, tfidf_pos_matrix, click_store, doc_years
+
+print("Loading index...")
+vectorizer, pos_weight_diag, doc_ids, doc_titles, doc_abstracts, tfidf_matrix, tfidf_pos_matrix, click_store, doc_years = load_index()
+stop_words = set(stopwords.words('english'))
+stemmer    = PorterStemmer()
+print(f"Index loaded — {len(doc_ids)} documents")
+
+# ── NLP helpers ───────────────────────────────────────────────
+def preprocess(text):
+    text = text.lower()
+    text = re.sub(r'[^\w\s\-]', '', text)
+    text = re.sub(r'\d+', '', text)
+    tokens = word_tokenize(text)
+    tokens = [t for t in tokens if t not in stop_words and t.strip()]
+    tokens = [stemmer.stem(t) for t in tokens]
+    return ' '.join(tokens)
+
+def normalise_query(query):
+    return ' '.join(sorted(preprocess(query).split()))
+
+def get_click_score(query, doc_id):
+    key    = normalise_query(query)
+    clicks = click_store[key]
+    if not clicks or doc_id not in clicks:
+        return 0.0
+    return clicks[doc_id] / max(clicks.values())
+
+# ── Search ────────────────────────────────────────────────────
+def search(query, top_k=10, sort_by='blended', alpha=0.7):
+    processed  = preprocess(query)
+    query_vec  = vectorizer.transform([processed])
+    query_vec_pos = query_vec.dot(pos_weight_diag)
+
+    cosine_scores = cosine_similarity(query_vec_pos, tfidf_pos_matrix).flatten()
+
+    click_scores  = np.array([get_click_score(query, doc_ids[i]) for i in range(len(doc_ids))])
+    blended_scores = alpha * cosine_scores + (1 - alpha) * click_scores
+    year_scores   = np.array(doc_years, dtype=float)
+
+    if sort_by == 'relevance':
+        scores = cosine_scores
+    elif sort_by == 'popularity':
+        scores = click_scores
+    elif sort_by == 'newest':
+        # only consider docs with cosine score > 0 (relevant docs), sort by year
+        scores = np.where(cosine_scores > 0.05, year_scores, 0)
+    else:  # blended (default)
+        scores = blended_scores
+
+    top_indices = scores.argsort()[::-1][:top_k]
+
+    results = []
+    for rank, idx in enumerate(top_indices, 1):
+        results.append({
+            'rank':          rank,
+            'id':            doc_ids[idx],
+            'title':         doc_titles[idx].replace('\n', ' '),
+            'abstract':      doc_abstracts[idx][:300].replace('\n', ' ') + '...',
+            'cosine_score':  round(float(cosine_scores[idx]),  4),
+            'click_score':   round(float(click_scores[idx]),   4),
+            'blended_score': round(float(blended_scores[idx]), 4),
+            'year':          doc_years[idx],
+        })
+    return results
+
+# ── Routes ────────────────────────────────────────────────────
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/search')
+def do_search():
+    query   = request.args.get('q', '').strip()
+    sort_by = request.args.get('sort', 'blended')
+    top_k   = int(request.args.get('k', 10))
+    if not query:
+        return jsonify([])
+    results = search(query, top_k=top_k, sort_by=sort_by)
+    return jsonify(results)
+
+@app.route('/click', methods=['POST'])
+def record_click():
+    data   = request.get_json()
+    query  = data.get('query', '')
+    doc_id = data.get('doc_id', '')
+    if query and doc_id:
+        key = normalise_query(query)
+        click_store[key][doc_id] += 1
+        with open(f'{BASE}/click_store.pkl', 'wb') as f:
+            pickle.dump({k: dict(v) for k, v in click_store.items()}, f)
+    return jsonify({'status': 'ok'})
+
+if __name__ == '__main__':
+    app.run(debug=True, port=5000)
+Step 4 — Create the HTML template
+Inside your search_engine folder, create a subfolder called templates, then inside that create index.html and paste this:
+
+html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CS Paper Search Engine</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #f5f7fa;
+      color: #1a1a2e;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #1a1a2e;
+      color: white;
+      padding: 28px 40px 20px;
+    }
+    header h1 { font-size: 1.6rem; font-weight: 600; }
+    header p  { font-size: 0.85rem; opacity: 0.6; margin-top: 4px; }
+
+    .search-bar {
+      background: #1a1a2e;
+      padding: 0 40px 24px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .search-bar input[type="text"] {
+      flex: 1;
+      min-width: 260px;
+      padding: 11px 16px;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      background: white;
+      outline: none;
+    }
+
+    .search-bar select {
+      padding: 11px 12px;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      background: #2d2d4e;
+      color: white;
+      cursor: pointer;
+      outline: none;
+    }
+
+    .search-bar button {
+      padding: 11px 22px;
+      background: #4f6ef7;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      cursor: pointer;
+      font-weight: 500;
+      transition: background 0.2s;
+    }
+    .search-bar button:hover { background: #3a56d4; }
+
+    .main { max-width: 900px; margin: 30px auto; padding: 0 20px; }
+
+    #status {
+      font-size: 0.9rem;
+      color: #666;
+      margin-bottom: 16px;
+    }
+
+    .result-card {
+      background: white;
+      border-radius: 10px;
+      padding: 20px 24px;
+      margin-bottom: 14px;
+      border: 1px solid #e8eaf0;
+      transition: box-shadow 0.2s;
+    }
+    .result-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
+
+    .result-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+    }
+
+    .rank-badge {
+      background: #f0f2ff;
+      color: #4f6ef7;
+      font-weight: 700;
+      font-size: 0.85rem;
+      min-width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .result-title {
+      font-size: 1rem;
+      font-weight: 600;
+      color: #1a1a2e;
+      cursor: pointer;
+      line-height: 1.4;
+      border: none;
+      background: none;
+      text-align: left;
+      padding: 0;
+      transition: color 0.15s;
+    }
+    .result-title:hover { color: #4f6ef7; }
+    .result-title.clicked { color: #4f6ef7; }
+
+    .result-abstract {
+      font-size: 0.875rem;
+      color: #555;
+      margin: 10px 0 14px 46px;
+      line-height: 1.6;
+    }
+
+    .scores {
+      display: flex;
+      gap: 10px;
+      margin-left: 46px;
+      flex-wrap: wrap;
+    }
+
+    .score-pill {
+      font-size: 0.78rem;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-weight: 500;
+    }
+    .pill-blended  { background: #e8f0fe; color: #3a56d4; }
+    .pill-cosine   { background: #e6f4ea; color: #2e7d32; }
+    .pill-click    { background: #fff3e0; color: #e65100; }
+    .pill-year     { background: #f3e5f5; color: #6a1b9a; }
+
+    #loading {
+      text-align: center;
+      padding: 40px;
+      color: #888;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🔍 Method-Aware Search Engine</h1>
+  <p>CS Research Papers · POS-weighted TF-IDF · Click-through Re-ranking</p>
+</header>
+
+<div class="search-bar">
+  <input type="text" id="query" placeholder="e.g. graph neural network node classification" />
+
+  <select id="sort">
+    <option value="blended">Blended (default)</option>
+    <option value="relevance">Relevance</option>
+    <option value="popularity">Click popularity</option>
+    <option value="newest">Newest first</option>
+  </select>
+
+  <select id="topk">
+    <option value="5">5 results</option>
+    <option value="10" selected>10 results</option>
+    <option value="20">20 results</option>
+  </select>
+
+  <button onclick="runSearch()">Search</button>
+</div>
+
+<div class="main">
+  <div id="status"></div>
+  <div id="loading">Searching...</div>
+  <div id="results"></div>
+</div>
+
+<script>
+  let currentQuery = '';
+
+  document.getElementById('query').addEventListener('keydown', e => {
+    if (e.key === 'Enter') runSearch();
+  });
+
+  // Re-run search when sort changes
+  document.getElementById('sort').addEventListener('change', () => {
+    if (currentQuery) runSearch();
+  });
+
+  async function runSearch() {
+    const query  = document.getElementById('query').value.trim();
+    const sort   = document.getElementById('sort').value;
+    const topk   = document.getElementById('topk').value;
+    if (!query) return;
+
+    currentQuery = query;
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('results').innerHTML = '';
+    document.getElementById('status').textContent = '';
+
+    const res  = await fetch(`/search?q=${encodeURIComponent(query)}&sort=${sort}&k=${topk}`);
+    const data = await res.json();
+
+    document.getElementById('loading').style.display = 'none';
+
+    if (!data.length) {
+      document.getElementById('status').textContent = 'No results found.';
+      return;
+    }
+
+    const sortLabel = {
+      blended: 'Blended score',
+      relevance: 'Relevance',
+      popularity: 'Click popularity',
+      newest: 'Newest first'
+    }[sort];
+
+    document.getElementById('status').innerHTML =
+      `<strong>${data.length} results</strong> for "<em>${query}</em>" &nbsp;·&nbsp; Sorted by: ${sortLabel}`;
+
+    const container = document.getElementById('results');
+    data.forEach(r => {
+      const card = document.createElement('div');
+      card.className = 'result-card';
+      card.innerHTML = `
+        <div class="result-header">
+          <div class="rank-badge">${r.rank}</div>
+          <button class="result-title" id="title-${r.id}"
+            onclick="recordClick('${r.id}', this)">
+            ${r.title}
+          </button>
+        </div>
+        <p class="result-abstract">${r.abstract}</p>
+        <div class="scores">
+          <span class="score-pill pill-blended">Blended: ${r.blended_score}</span>
+          <span class="score-pill pill-cosine">Cosine: ${r.cosine_score}</span>
+          <span class="score-pill pill-click">Clicks: ${r.click_score}</span>
+          <span class="score-pill pill-year">Year: ${r.year}</span>
+        </div>
+      `;
+      container.appendChild(card);
+    });
+  }
+
+  async function recordClick(docId, btn) {
+    btn.classList.add('clicked');
+    await fetch('/click', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: currentQuery, doc_id: docId })
+    });
+  }
+</script>
+
+</body>
+</html>
+Step 5 — Your folder structure should look like this
+search_engine/
+├── app.py
+├── vectorizer.pkl
+├── pos_weight_vector.pkl
+├── doc_ids.pkl
+├── doc_titles.pkl
+├── doc_abstracts.pkl
+├── tfidf_pos_matrix.npz
+├── tfidf_base_matrix.npz
+├── click_store.pkl
+└── templates/
+    └── index.html
+Step 6 — Run it
+Open your terminal, navigate to the folder and run:
+
+cd C:\Users\tapa03\search_engine
+python app.py
+You'll see:
+
+Loading index...
+Index loaded — 23680 documents
+ * Running on http://127.0.0.1:5000
+Open http://127.0.0.1:5000 in your browser and you're live. The sorting dropdown will instantly re-sort results when changed without needing to re-search. Let me know when it's running.
+
+so i opened python and tried python -c "import nltk; nltk.download('punkt'); nltk.download('punkt_tab'); nltk.download('stopwords'); nltk.download('averaged_perceptron_tagger')" but got this error : Python 3.13.12 (tags/v3.13.12:1cbe481, Feb  3 2026, 18:22:25) [MSC v.1944 64 bit (AMD64)] on win32
+Type "help", "copyright", "credits" or "license" for more information.
+>>> python -c "import nltk; nltk.download('punkt'); nltk.download('punkt_tab'); nltk.download('stopwords'); nltk.downlo\ad('averaged_perceptron_tagger')"
+  File "<python-input-0>", line 1
+    python -c "import nltk; nltk.download('punkt'); nltk.download('punkt_tab'); nltk.download('stopwords'); nltk.download('averaged_perceptron_tagger')"
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+SyntaxError: invalid syntax
+>>>
+
+Show more
+Mar 31
+You accidentally ran the command inside the Python shell instead of the terminal. The >>> means Python is open and waiting for Python code, not terminal commands.
+
+Close that Python window first, then follow these steps:
+
+1. Open a normal terminal — press Win + R, type cmd, press Enter. You should see a plain black window with C:\Users\tapa03> — no >>>.
+
+2. Run pip install first:
+
+pip install flask scikit-learn scipy nltk numpy
+3. Then run the NLTK download — copy this exactly as one line:
+
+python -c "import nltk; nltk.download('punkt'); nltk.download('punkt_tab'); nltk.download('stopwords'); nltk.download('averaged_perceptron_tagger')"
+You should see output like:
+
+[nltk_data] Downloading package punkt...
+[nltk_data] Downloading package stopwords...
+The key difference is — when you see C:\Users\tapa03> you're in the terminal (correct). When you see >>> you're inside Python (wrong place for these commands).
+
+Files hidden in shared chats
+these are all my files, when i try python app.py in cmd nothing happens
+
+Mar 31
+The app.py file is empty — it didn't save properly when you created it. Let me write it correctly directly to your files.
+
+
+Created 2 files, ran a command
+Created 2 files, ran a command
+Claude's response was interrupted
+yep it works. some adjustments i want to make: 1. I want to be able to open the papers, so when i press it opens the link which should be in the database i believe. 2. I want to save the clicks so then the click functionality actually works, or else put test click data in the db. 3. explain the difference between the relevance and blended sorting filters. I want to add also sorting filters which would be ideal for these sort of papers
+
+Mar 31
+Let me check the data first to see what fields are available for links and to understand the click store.
+
+
+Ran 2 commands
+Ran 2 commands
+Good — everything is clear. Here's what I found:
+
+Links — the IDs are arXiv IDs stored as floats (e.g. 704.0033 → https://arxiv.org/abs/0704.0033). Need to zero-pad the left side to 4 digits.
+
+Click store — has real data from your notebook testing: query "classif graph network neural node" with 4 clicks on one doc and 6 on another. The issue is the keys are stored as floats but the app compares them as strings, so they never match. Need to fix that.
+
+Sorting — I'll answer question 3 and add better sort options below, then give you the updated files.
+
+Answer to question 3 — Relevance vs Blended
+Relevance (cosine only) ranks purely by how mathematically similar the query vector is to each document vector. It has no memory — every search starts fresh. A paper that perfectly matches your query terms will always rank first regardless of whether anyone has ever found it useful.
+
+Blended combines cosine similarity with click history: 0.7 × cosine + 0.3 × click_score. This means a paper that ranks 3rd by pure relevance but has been clicked many times for similar queries will be promoted upward. Over time it learns which results users actually find valuable, not just which ones match the words. The tradeoff is that brand new papers with no clicks can be buried even if they're highly relevant.
+
+For your viva, the one-line summary is: relevance is stateless and mathematical; blended is stateful and learns from behaviour.
+
+Additional sort options worth adding for CS papers
+Most cited proxy — sort by how many other queries have clicked this document (global popularity, not query-specific)
+Abstract length — longer abstracts tend to be more detailed papers vs short workshop notes
+Category match — filter/sort by arXiv CS subcategory (cs.LG, cs.CV, cs.NLP etc.)
+I'll add category filter + cited proxy to the updated app now.
+
+
+Ran 3 commands, created 3 files, read a file
+Ran 3 commands, created 3 files, read a file
+Download all three files. Here's exactly what to do with them:
+
+What changed
+1. Papers now open — every result has an arXiv:XXXX.XXXXX ↗ link below the title and an Open paper ↗ button on the right. Both open the real arXiv page. The float IDs like 704.0033 are correctly converted to 0704.0033 before building the URL.
+
+2. Clicks now work — the click store was storing doc IDs as floats but comparing them as strings, so nothing ever matched. Everything is now consistently handled as floats throughout. Clicking a title or the Open button both record a click and save it to click_store.pkl immediately.
+
+3. New seeded click_store.pkl — replace your old one with this new file. It has test click data across 6 different queries so the click and popularity scores will show non-zero values from the start.
+
+4. Six sort options — Blended, Relevance only, Trending, Most clicked, Newest first, Oldest first. Each one shows a description bar explaining exactly what it does when selected — useful for your viva demo.
+
+Setup steps
+Replace app.py in your search_engine folder with the new one, replace click_store.pkl with the new one, and put index.html inside the templates subfolder replacing the old one. Your folder structure stays the same — nothing else changes. Then run python app.py as before.
+
+i replaced the files you gave me, but click are still not being reflected when i click on one and the link dont work it all says undefined
+
+Mar 31
+Let me check what's happening with the IDs specifically.
+
+
+Ran 4 commands
+Ran 4 commands
+The undefined issue almost certainly means one of two things — either the old app.py is still running, or index.html is in the wrong place. Let's rule everything out properly.
+
+Step 1 — Stop the running server
+
+In your terminal where app.py is running, press Ctrl+C to kill it.
+
+Step 2 — Verify your folder structure is exactly this
+
+Open File Explorer and check:
+
+search_engine/
+├── app.py              ← the new one you downloaded
+├── click_store.pkl     ← the new one you downloaded
+├── vectorizer.pkl
+├── doc_ids.pkl
+├── doc_titles.pkl
+├── doc_abstracts.pkl
+├── pos_weight_vector.pkl
+├── tfidf_pos_matrix.npz
+├── tfidf_base_matrix.npz
+└── templates/
+    └── index.html      ← must be INSIDE the templates folder
+The most common mistake is index.html sitting in search_engine/ directly instead of inside search_engine/templates/.
+
+Step 3 — Verify the new app.py saved correctly
+
+Open app.py in Notepad and search for the word arxiv_url — if you don't see it, the file didn't save properly. It should appear around line 15.
+
+Step 4 — Restart cleanly
+
+cd C:\Users\tapa03\search_engine
+python app.py
+You should see:
+
+Loading index...
+Index loaded — 23680 documents ready
+ * Running on http://127.0.0.1:5000
+Step 5 — Hard refresh the browser
+
+Press Ctrl+Shift+R on http://127.0.0.1:5000 — this clears the cached old JavaScript so the browser isn't still running the old frontend.
+
+Let me know what you see in the terminal when you run python app.py and whether the folder structure matches above.
+
+C:\Users\tapa03\search_engine>python app.py
+Loading index...
+C:\Users\tapa03\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\sklearn\base.py:463: InconsistentVersionWarning: Trying to unpickle estimator TfidfTransformer from version 1.6.1 when using version 1.8.0. This might lead to breaking code or invalid results. Use at your own risk. For more info please refer to:
+https://scikit-learn.org/stable/model_persistence.html#security-maintainability-limitations
+  warnings.warn(
+C:\Users\tapa03\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\sklearn\base.py:463: InconsistentVersionWarning: Trying to unpickle estimator TfidfVectorizer from version 1.6.1 when using version 1.8.0. This might lead to breaking code or invalid results. Use at your own risk. For more info please refer to:
+https://scikit-learn.org/stable/model_persistence.html#security-maintainability-limitations
+  warnings.warn(
+Index loaded — 23680 documents
+ * Serving Flask app 'app'
+ * Debug mode: on
+WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+ * Running on http://127.0.0.1:5000
+Press CTRL+C to quit
+ * Restarting with stat
+Loading index...
+C:\Users\tapa03\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\sklearn\base.py:463: InconsistentVersionWarning: Trying to unpickle estimator TfidfTransformer from version 1.6.1 when using version 1.8.0. This might lead to breaking code or invalid results. Use at your own risk. For more info please refer to:
+https://scikit-learn.org/stable/model_persistence.html#security-maintainability-limitations
+  warnings.warn(
+C:\Users\tapa03\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\sklearn\base.py:463: InconsistentVersionWarning: Trying to unpickle estimator TfidfVectorizer from version 1.6.1 when using version 1.8.0. This might lead to breaking code or invalid results. Use at your own risk. For more info please refer to:
+https://scikit-learn.org/stable/model_persistence.html#security-maintainability-limitations
+  warnings.warn(
+Index loaded — 23680 documents
+ * Debugger is active!
+ * Debugger PIN: 821-882-451
+127.0.0.1 - - [31/Mar/2026 16:03:10] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [31/Mar/2026 16:03:14] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [31/Mar/2026 16:03:14] "GET /favicon.ico HTTP/1.1" 404 -
+
+Show more
+Mar 31
+The server is running fine. The sklearn version warning is harmless — ignore it. The fact you're getting 200 responses means the app and template are loading correctly.
+
+Now let's see what actually comes back from a search. Open your browser, go to http://127.0.0.1:5000 and search for something. Then paste the URL below into your browser directly and tell me what you see:
+
+http://127.0.0.1:5000/search?q=neural+network&sort=blended&k=5
+You should see raw JSON in the browser. Paste what it shows here and I'll know exactly which fields are missing and fix it in one shot.
+
+Also check the terminal while you do this — it should log a new line like GET /search?q=... which confirms the search endpoint is being hit.
+
+Files hidden in shared chats
+when i search for something and press enter, the url stays the same 127.0.0.2:5000, this is what i see in the terminal : 127.0.0.1 - - [31/Mar/2026 16:03:10] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [31/Mar/2026 16:03:14] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [31/Mar/2026 16:03:14] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [31/Mar/2026 16:04:17] "GET /search?q=neural%20networks&sort=blended&k=10 HTTP/1.1" 200 -
+127.0.0.1 - - [31/Mar/2026 16:04:34] "POST /click HTTP/1.1" 200 -
+127.0.0.1 - - [31/Mar/2026 16:04:34] "GET /undefined HTTP/1.1" 404 -
+127.0.0.1 - - [31/Mar/2026 16:05:04] "GET /search?q=neural%20networks&sort=blended&k=10 HTTP/1.1" 200 -
+
+Mar 31
+Good progress — the search and click endpoints are both working (200 responses). The problem is clear from the terminal: GET /undefined HTTP/1.1 — when you click "Open paper" it's trying to navigate to /undefined instead of the arXiv URL. This means r.url and r.arxiv_id are coming back as undefined from the JSON, which means app.py is not returning those fields.
+
+Let me check exactly what your current app.py is returning:
+
+
+Reading the app.py the user actually has
+Reading the app.py the user actually has
+The uploaded app.py is empty — so the one on your machine is either the original broken version or didn't save right. Rather than guessing, let me give you the simplest possible fix — open your app.py in Notepad and search for float_to_arxiv_id. If that function isn't there, the file is old.
+
+The quickest fix is to open app.py in Notepad and replace the entire search() function. Find the function that starts with def search( and replace everything from that line until the return results line with this:
+
+python
+def search(query, top_k=10, sort_by='blended', alpha=0.7):
+    processed     = preprocess(query)
+    query_vec     = vectorizer.transform([processed])
+    query_vec_pos = query_vec.dot(pos_weight_diag)
+
+    cosine_scores  = cosine_similarity(query_vec_pos, tfidf_pos_matrix).flatten()
+    click_scores   = np.array([get_click_score(query, doc_ids[i]) for i in range(len(doc_ids))])
+    blended_scores = alpha * cosine_scores + (1 - alpha) * click_scores
+    year_scores    = np.array(doc_years, dtype=float)
+    popularity     = np.array([get_global_popularity(doc_ids[i]) for i in range(len(doc_ids))])
+
+    if sort_by == 'relevance':
+        scores = cosine_scores
+    elif sort_by == 'blended':
+        scores = blended_scores
+    elif sort_by == 'popularity':
+        scores = np.where(cosine_scores > 0.05, popularity, 0)
+    elif sort_by == 'newest':
+        scores = np.where(cosine_scores > 0.05, year_scores, 0)
+    elif sort_by == 'oldest':
+        max_year = float(max(doc_years)) if doc_years else 2026.0
+        scores = np.where(cosine_scores > 0.05, max_year - year_scores, 0)
+    elif sort_by == 'trending':
+        scores = 0.6 * cosine_scores + 0.4 * popularity
+    else:
+        scores = blended_scores
+
+    top_indices = scores.argsort()[::-1][:top_k]
+
+    results = []
+    for rank, idx in enumerate(top_indices, 1):
+        doc_id   = doc_ids[idx]
+        raw      = str(doc_id)
+        parts    = raw.split('.')
+        left     = parts[0].zfill(4)
+        right    = parts[1] if len(parts) > 1 else '0000'
+        arxiv_id = f'{left}.{right}'
+        url      = f'https://arxiv.org/abs/{arxiv_id}'
+
+        results.append({
+            'rank':          rank,
+            'id':            raw,
+            'arxiv_id':      arxiv_id,
+            'url':           url,
+            'title':         str(doc_titles[idx]).replace('\n', ' ').strip(),
+            'abstract':      str(doc_abstracts[idx])[:350].replace('\n', ' ').strip() + '...',
+            'cosine_score':  round(float(cosine_scores[idx]),  4),
+            'click_score':   round(float(click_scores[idx]),   4),
+            'blended_score': round(float(blended_scores[idx]), 4),
+            'popularity':    round(float(popularity[idx]),     4),
+            'year':          int(doc_years[idx]),
+        })
+    return results
+Actually, the safest approach given the file saving issues is to just write the whole thing fresh. Open a terminal in your search_engine folder and run this one command which writes app.py directly:
+
+
+Ran a command, read a file
+Ran a command, read a file
+Download write_app.py and put it in your search_engine folder. Then in your terminal:
+
+cd C:\Users\tapa03\search_engine
+python write_app.py
+That will write both app.py and templates/index.html correctly in one shot — no copy-paste, no encoding issues. Then run:
+
+python app.py
+This approach bypasses the file saving problem entirely. The script generates the files directly on your machine so there's no chance of encoding corruption. Let me know what you see.
+
+Files hidden in shared chats
+i rewrote the file and the urls are working now, but not sure whats happening wiht the clicks. the first file has 1 click but nothing else is updating, is it meant to update with my clicks or is it looking at the clicks from the database?
+
+Mar 31
+Good — app.py looks correct now. Let me explain what's happening with clicks and then verify the flow is working end to end.
+
+How clicks are supposed to work:
+
+You search for something — results appear
+You click a title or "Open paper" — that fires a POST to /click which increments the count in memory AND saves to click_store.pkl
+You search the same query again — the blended score for that document goes up and it ranks higher
+The click score pills on the results update to reflect it
+The key point is that clicks only affect the next search, not the current one. The current results don't re-render automatically — you have to search again to see the re-ranking. This is by design and matches how real search engines work.
+
+Let me verify the click endpoint is actually receiving and saving correctly:
+
+
+Checking click store contents and types
+Checking click store contents and types
+The click store only has the seeded test data — no real clicks from your browser session yet. This means the clicks from the UI aren't persisting, which points to one thing: the click_store.pkl your app is saving to is in the search_engine folder on your machine, but you're looking at the original file here. That's fine — they're separate.
+
+To confirm clicks are actually working on your machine, do this test:
+
+1. Search for graph neural network node classification
+
+2. Click one of the result titles
+
+3. Check your terminal — you should see:
+
+127.0.0.1 - - [..] "POST /click HTTP/1.1" 200 -
+4. Search the exact same query again — the clicked paper's Click: pill should now show a non-zero value and its blended score should be higher
+
+5. Open your search_engine folder in File Explorer — the click_store.pkl file's "Date modified" timestamp should have updated
+
+If step 3 shows 200 but step 5 shows the file hasn't changed, it means Flask doesn't have write permission to that folder. In that case add this one line to your record_click route as a debug check — right after the pickle.dump line:
+
+python
+print(f"Click saved: query='{key}' doc={fid} total_clicks={click_store[key][fid]}")
+This will print to your terminal every time a click saves, so you can confirm it's working. Try the test and let me know what you see in the terminal after clicking.
+
+yeah its working. however its not incrementing by one each time i click the same file and search agian, its increasing by a few decimal. is that how its mean to be?
+
+Mar 31
+No, that's a bug. It's incrementing by decimals because the click score you see in the pill is the normalised score (clicks / max_clicks), not the raw click count. But the real issue is clicks are being recorded multiple times per click — both the title onclick and the "Open paper" button fire recordClick simultaneously since they're on the same element.
+
+Fix both issues — show raw click count in the pill, and make sure each click only records once:
+
+
+Check write_app.py exists
+Check write_app.py exists
+Open your app.py and make these two small changes:
+
+Change 1 — Return raw click count alongside the normalised score
+
+In the search() function, find where you build each result dict and add click_count:
+
+python
+# Find this block (around the results.append line):
+results.append({
+    'rank':          rank,
+    'id':            raw,
+    'arxiv_id':      arxiv_id,
+    'url':           url,
+    'title':         str(doc_titles[idx]).replace('\n', ' ').strip(),
+    'abstract':      str(doc_abstracts[idx])[:350].replace('\n', ' ').strip() + '...',
+    'cosine_score':  round(float(cosine_scores[idx]),  4),
+    'click_score':   round(float(click_scores[idx]),   4),
+    'blended_score': round(float(blended_scores[idx]), 4),
+    'popularity':    round(float(popularity[idx]),     4),
+    'year':          int(doc_years[idx]),
+})
+Replace it with this — adds click_count and global_count:
+
+python
+# Raw counts for display
+q_key      = normalise_query(query)
+raw_clicks = int(click_store[q_key].get(float(doc_id), 0))
+raw_global = int(global_clicks.get(float(doc_id), 0))
+
+results.append({
+    'rank':          rank,
+    'id':            raw,
+    'arxiv_id':      arxiv_id,
+    'url':           url,
+    'title':         str(doc_titles[idx]).replace('\n', ' ').strip(),
+    'abstract':      str(doc_abstracts[idx])[:350].replace('\n', ' ').strip() + '...',
+    'cosine_score':  round(float(cosine_scores[idx]),  4),
+    'click_score':   round(float(click_scores[idx]),   4),
+    'blended_score': round(float(blended_scores[idx]), 4),
+    'popularity':    round(float(popularity[idx]),     4),
+    'year':          int(doc_years[idx]),
+    'click_count':   raw_clicks,
+    'global_count':  raw_global,
+})
+Change 2 — Fix double-firing in the HTML
+
+Open templates/index.html and find the recordClick function and where the cards are built. Replace the entire <script> block's recordClick function and the card innerHTML with these fixed versions:
+
+In the forEach that builds cards, replace the card.innerHTML assignment with:
+
+javascript
+data.forEach(function(r) {
+  const card = document.createElement('div');
+  card.className = 'result-card';
+  const safeId = r.id.replace('.', '_');
+
+  card.innerHTML =
+    '<div class="result-header">' +
+      '<div class="rank-badge">' + r.rank + '</div>' +
+      '<div class="title-block">' +
+        '<a class="result-title" id="title-' + safeId + '" href="' + r.url + '" target="_blank">' + r.title + '</a>' +
+        '<a class="arxiv-link" href="' + r.url + '" target="_blank">arXiv:' + r.arxiv_id + ' &#8599;</a>' +
+      '</div>' +
+    '</div>' +
+    '<p class="result-abstract">' + r.abstract + '</p>' +
+    '<div class="scores">' +
+      '<span class="score-pill pill-blended">Blended: ' + r.blended_score + '</span>' +
+      '<span class="score-pill pill-cosine">Cosine: ' + r.cosine_score + '</span>' +
+      '<span class="score-pill pill-click">Clicks (query): ' + r.click_count + '</span>' +
+      '<span class="score-pill pill-popularity">Clicks (global): ' + r.global_count + '</span>' +
+      '<span class="score-pill pill-year">' + r.year + '</span>' +
+      '<button class="open-btn" onclick="openPaper(\'' + r.id + '\', \'' + r.url + '\')">Open paper &#8599;</button>' +
+    '</div>';
+
+  container.appendChild(card);
+});
+And replace the recordClick function with these two separate functions:
+
+javascript
+// Single click recorder — called once per user action
+async function recordClick(docId) {
+  const safeId = docId.replace('.', '_');
+  const btn = document.getElementById('title-' + safeId);
+  if (btn) btn.classList.add('clicked');
+  await fetch('/click', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ query: currentQuery, doc_id: docId })
+  });
+}
+
+// Opens paper AND records click — used by the Open button only
+function openPaper(docId, url) {
+  recordClick(docId);
+  window.open(url, '_blank');
+}
+Also add onclick="recordClick(r.id)" to the title link by changing the title anchor to:
+
+javascript
+'<a class="result-title" id="title-' + safeId + '" href="' + r.url + '" target="_blank" onclick="recordClick(\'' + r.id + '\')">' + r.title + '</a>' +
+After these changes, each click records exactly once and the pills show raw integer counts (e.g. Clicks (query): 3) instead of the normalised decimal. Search the same query again and you'll see those numbers increment by exactly 1 each time.
+
+Files hidden in shared chats
+so is this correct? :
+
+Mar 31
+Almost — but there are two bugs visible in the HTML. The forEach closing brace is missing, and the recordClick and openPaper functions are accidentally inside the forEach block instead of outside it. Here's the corrected script section — replace everything from <script> to </script> with this:
+
+html
+<script>
+  const SORT_INFO = {
+    blended:    { label: 'Blended (default)',  desc: 'Combines cosine similarity (0.7x) with your query-specific click history (0.3x). Learns from what users clicked for this exact query — starts purely mathematical, improves over time.' },
+    relevance:  { label: 'Relevance only',     desc: 'Pure cosine similarity between your query vector and document vectors. No click influence. Best for unbiased retrieval or first-time queries with no click history.' },
+    trending:   { label: 'Trending',           desc: 'Combines cosine similarity (0.6x) with global click popularity across all queries (0.4x). Surfaces papers that are both relevant and widely accessed by other users.' },
+    popularity: { label: 'Most clicked',       desc: 'Among relevant results, sorts by how many times each paper has been clicked across all queries.' },
+    newest:     { label: 'Newest first',       desc: 'Among relevant results, sorts by publication year descending. Useful for finding recent work.' },
+    oldest:     { label: 'Oldest first',       desc: 'Among relevant results, sorts by publication year ascending. Ideal for literature reviews — surfaces foundational papers first.' },
+  };
+
+  let currentQuery = '';
+
+  document.getElementById('query').addEventListener('keydown', e => {
+    if (e.key === 'Enter') runSearch();
+  });
+
+  function onSortChange() {
+    updateLegend();
+    if (currentQuery) runSearch();
+  }
+
+  function updateLegend() {
+    const sort   = document.getElementById('sort').value;
+    const legend = document.getElementById('sort-legend');
+    const info   = SORT_INFO[sort];
+    legend.style.display = 'block';
+    legend.innerHTML = '<strong>' + info.label + ':</strong> ' + info.desc;
+  }
+
+  async function runSearch() {
+    const query = document.getElementById('query').value.trim();
+    const sort  = document.getElementById('sort').value;
+    const topk  = document.getElementById('topk').value;
+    if (!query) return;
+
+    currentQuery = query;
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('results').innerHTML = '';
+    document.getElementById('status').textContent = '';
+    updateLegend();
+
+    const res  = await fetch('/search?q=' + encodeURIComponent(query) + '&sort=' + sort + '&k=' + topk);
+    const data = await res.json();
+
+    document.getElementById('loading').style.display = 'none';
+
+    if (!data.length) {
+      document.getElementById('status').textContent = 'No results found. Try different keywords.';
+      return;
+    }
+
+    document.getElementById('status').innerHTML =
+      '<strong>' + data.length + ' results</strong> for "<em>' + query + '</em>"';
+
+    const container = document.getElementById('results');
+
+    data.forEach(function(r) {
+      const card   = document.createElement('div');
+      card.className = 'result-card';
+      const safeId = r.id.replace('.', '_');
+
+      card.innerHTML =
+        '<div class="result-header">' +
+          '<div class="rank-badge">' + r.rank + '</div>' +
+          '<div class="title-block">' +
+            '<a class="result-title" id="title-' + safeId + '" href="' + r.url + '" target="_blank" onclick="recordClick(\'' + r.id + '\')">' + r.title + '</a>' +
+            '<a class="arxiv-link" href="' + r.url + '" target="_blank">arXiv:' + r.arxiv_id + ' &#8599;</a>' +
+          '</div>' +
+        '</div>' +
+        '<p class="result-abstract">' + r.abstract + '</p>' +
+        '<div class="scores">' +
+          '<span class="score-pill pill-blended">Blended: ' + r.blended_score + '</span>' +
+          '<span class="score-pill pill-cosine">Cosine: ' + r.cosine_score + '</span>' +
+          '<span class="score-pill pill-click">Clicks (query): ' + r.click_count + '</span>' +
+          '<span class="score-pill pill-popularity">Clicks (global): ' + r.global_count + '</span>' +
+          '<span class="score-pill pill-year">' + r.year + '</span>' +
+          '<button class="open-btn" onclick="openPaper(\'' + r.id + '\', \'' + r.url + '\')">Open paper &#8599;</button>' +
+        '</div>';
+
+      container.appendChild(card);
+    }); // <-- forEach closes here
+
+  } // <-- runSearch closes here
+
+  // Single click recorder — called once per user action
+  async function recordClick(docId) {
+    const safeId = docId.replace('.', '_');
+    const btn = document.getElementById('title-' + safeId);
+    if (btn) btn.classList.add('clicked');
+    await fetch('/click', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ query: currentQuery, doc_id: docId })
+    });
+  }
+
+  // Opens paper AND records click — used by the Open button only
+  function openPaper(docId, url) {
+    recordClick(docId);
+    window.open(url, '_blank');
+  }
+
+</script>
+The two fixes are the }); closing the forEach and the } closing runSearch — both were missing, which meant recordClick and openPaper were defined inside runSearch and recreated on every search instead of being proper global functions. After saving, restart Flask with Ctrl+C then python app.py, hard refresh with Ctrl+Shift+R, and clicks should now increment by exactly 1 each time.
+
+Files hidden in shared chats
+Mar 31
+Clear error — doc_id is being used before it's defined in the loop. The q_key and raw_clicks lines got placed outside the for loop by mistake. In your app.py, find the search() function and replace the entire results-building section with this:
+
+python
+    top_indices = scores.argsort()[::-1][:top_k]
+    q_key = normalise_query(query)  # moved here, outside the loop
+
+    results = []
+    for rank, idx in enumerate(top_indices, 1):
+        doc_id   = doc_ids[idx]          # doc_id defined first
+        raw      = str(doc_id)
+        parts    = raw.split('.')
+        left     = parts[0].zfill(4)
+        right    = parts[1] if len(parts) > 1 else '0000'
+        arxiv_id = f'{left}.{right}'
+        url      = f'https://arxiv.org/abs/{arxiv_id}'
+
+        raw_clicks = int(click_store[q_key].get(float(doc_id), 0))
+        raw_global = int(global_clicks.get(float(doc_id), 0))
+
+        results.append({
+            'rank':          rank,
+            'id':            raw,
+            'arxiv_id':      arxiv_id,
+            'url':           url,
+            'title':         str(doc_titles[idx]).replace('\n', ' ').strip(),
+            'abstract':      str(doc_abstracts[idx])[:350].replace('\n', ' ').strip() + '...',
+            'cosine_score':  round(float(cosine_scores[idx]),  4),
+            'click_score':   round(float(click_scores[idx]),   4),
+            'blended_score': round(float(blended_scores[idx]), 4),
+            'popularity':    round(float(popularity[idx]),     4),
+            'year':          int(doc_years[idx]),
+            'click_count':   raw_clicks,
+            'global_count':  raw_global,
+        })
+    return results
+Save, restart with Ctrl+C then python app.py, and it'll work. The fix is just moving q_key above the loop and keeping raw_clicks/raw_global inside the loop after doc_id is assigned.
+
+Files hidden in shared chats
+still getting: , this is my current app.py
+
+Mar 31
+I can see the problem clearly in your app.py. You accidentally left the raw_clicks and raw_global lines at the top of the search() function, before the loop, where doc_id doesn't exist yet. Delete lines 119-120 — those two lines need to only exist inside the loop. Here's exactly what your search() function should look like:
+
+python
+def search(query, top_k=10, sort_by='blended', alpha=0.7):
+    processed     = preprocess(query)
+    query_vec     = vectorizer.transform([processed])
+    query_vec_pos = query_vec.dot(pos_weight_diag)
+
+    cosine_scores  = cosine_similarity(query_vec_pos, tfidf_pos_matrix).flatten()
+    click_scores   = np.array([get_click_score(query, doc_ids[i]) for i in range(len(doc_ids))])
+    blended_scores = alpha * cosine_scores + (1 - alpha) * click_scores
+    year_scores    = np.array(doc_years, dtype=float)
+    popularity     = np.array([get_global_popularity(doc_ids[i]) for i in range(len(doc_ids))])
+
+    if sort_by == 'relevance':
+        scores = cosine_scores
+    elif sort_by == 'blended':
+        scores = blended_scores
+    elif sort_by == 'popularity':
+        scores = np.where(cosine_scores > 0.05, popularity, 0)
+    elif sort_by == 'newest':
+        scores = np.where(cosine_scores > 0.05, year_scores, 0)
+    elif sort_by == 'oldest':
+        max_year = float(max(doc_years)) if doc_years else 2026.0
+        scores = np.where(cosine_scores > 0.05, max_year - year_scores, 0)
+    elif sort_by == 'trending':
+        scores = 0.6 * cosine_scores + 0.4 * popularity
+    else:
+        scores = blended_scores
+
+    top_indices = scores.argsort()[::-1][:top_k]
+    q_key = normalise_query(query)
+
+    results = []
+    for rank, idx in enumerate(top_indices, 1):
+        doc_id   = doc_ids[idx]
+        raw      = str(doc_id)
+        parts    = raw.split('.')
+        left     = parts[0].zfill(4)
+        right    = parts[1] if len(parts) > 1 else '0000'
+        arxiv_id = f'{left}.{right}'
+        url      = f'https://arxiv.org/abs/{arxiv_id}'
+
+        raw_clicks = int(click_store[q_key].get(float(doc_id), 0))
+        raw_global = int(global_clicks.get(float(doc_id), 0))
+
+        results.append({
+            'rank':          rank,
+            'id':            raw,
+            'arxiv_id':      arxiv_id,
+            'url':           url,
+            'title':         str(doc_titles[idx]).replace('\n', ' ').strip(),
+            'abstract':      str(doc_abstracts[idx])[:350].replace('\n', ' ').strip() + '...',
+            'cosine_score':  round(float(cosine_scores[idx]),  4),
+            'click_score':   round(float(click_scores[idx]),   4),
+            'blended_score': round(float(blended_scores[idx]), 4),
+            'popularity':    round(float(popularity[idx]),     4),
+            'year':          int(doc_years[idx]),
+            'click_count':   raw_clicks,
+            'global_count':  raw_global,
+        })
+    return results
+The only difference from your current file is that these two lines are deleted from near the top of the function:
+
+python
+# DELETE THESE TWO LINES (currently around line 119-120)
+raw_clicks = int(click_store[q_key].get(float(doc_id), 0))
+raw_global = int(global_clicks.get(float(doc_id), 0))
+They already exist correctly inside the loop further down — you just had a duplicate copy in the wrong place. Save, restart, and it'll work.
+
