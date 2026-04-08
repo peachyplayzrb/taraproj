@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "type": "command",
+        "command": "python .github/hooks/scripts/pre_tool_gate.py",
+        "timeout": 10
+      }
+    ],
+    "PostToolUse": [
+      {
+        "type": "command",
+        "command": "python .github/hooks/scripts/post_tool_note.py",
+        "timeout": 10
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "type": "command",
+        "command": "python .github/hooks/scripts/pre_submit_check.py",
+        "timeout": 10
+      }
+    ]
+  }
+}

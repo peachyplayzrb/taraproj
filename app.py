@@ -5,11 +5,15 @@ import numpy as np
 import re
 import nltk
 import os
+import warnings
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 from nltk.stem import PorterStemmer
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.exceptions import InconsistentVersionWarning
 from collections import defaultdict
+
+warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
 
 app = Flask(__name__)
 BASE = os.path.dirname(os.path.abspath(__file__))
