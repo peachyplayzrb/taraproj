@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CS Paper Search Engine</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #f5f7fa; color: #1a1a2e; min-height: 100vh; }
+ 
+    header { background: #1a1a2e; color: white; padding: 28px 40px 20px; }
+    header h1 { font-size: 1.6rem; font-weight: 600; }
+    header p  { font-size: 0.85rem; opacity: 0.6; margin-top: 4px; }
+ 
+    .search-bar {
+      background: #1a1a2e; padding: 0 40px 24px;
+      display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    }
+    .search-bar input[type="text"] {
+      flex: 1; min-width: 260px; padding: 11px 16px;
+      border: none; border-radius: 8px; font-size: 1rem;
+      background: white; outline: none;
+    }
+    .search-bar select {
+      padding: 11px 12px; border: none; border-radius: 8px;
+      font-size: 0.9rem; background: #2d2d4e; color: white;
+      cursor: pointer; outline: none;
+    }
+    .search-bar button {
+      padding: 11px 22px; background: #4f6ef7; color: white;
+      border: none; border-radius: 8px; font-size: 0.95rem;
+      cursor: pointer; font-weight: 500; transition: background 0.2s;
+    }
+    .search-bar button:hover { background: #3a56d4; }
+ 
+    .sort-legend {
+      background: #f0f2ff; border-left: 3px solid #4f6ef7;
+      padding: 10px 16px; margin: 0 0 18px;
+      font-size: 0.82rem; color: #3a3a5c; line-height: 1.6;
+      border-radius: 0 6px 6px 0;
+    }
+    .sort-legend strong { color: #1a1a2e; }
+ 
+    .main { max-width: 900px; margin: 30px auto; padding: 0 20px; }
+ 
+    #status { font-size: 0.9rem; color: #666; margin-bottom: 16px; }
+ 
+    .result-card {
+      background: white; border-radius: 10px; padding: 20px 24px;
+      margin-bottom: 14px; border: 1px solid #e8eaf0;
+      transition: box-shadow 0.2s;
+    }
+    .result-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
+ 
+    .result-header { display: flex; align-items: flex-start; gap: 14px; }
+ 
+    .rank-badge {
+      background: #f0f2ff; color: #4f6ef7; font-weight: 700;
+      font-size: 0.85rem; min-width: 32px; height: 32px;
+      border-radius: 8px; display: flex; align-items: center;
+      justify-content: center; flex-shrink: 0;
+    }
+ 
+    .title-block { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+ 
+    .result-title {
+      font-size: 1rem; font-weight: 600; color: #1a1a2e;
+      cursor: pointer; line-height: 1.4; border: none;
+      background: none; text-align: left; padding: 0;
+      transition: color 0.15s;
+    }
+    .result-title:hover { color: #4f6ef7; }
+    .result-title.clicked { color: #2e7d32; }
+ 
+    .arxiv-link {
+      font-size: 0.78rem; color: #4f6ef7; text-decoration: none;
+      opacity: 0.8;
+    }
+    .arxiv-link:hover { opacity: 1; text-decoration: underline; }
+ 
+    .result-abstract {
+      font-size: 0.875rem; color: #555;
+      margin: 10px 0 14px 46px; line-height: 1.6;
+    }
+ 
+    .scores { display: flex; gap: 8px; margin-left: 46px; flex-wrap: wrap; align-items: center; }
+ 
+    .score-pill {
+      font-size: 0.78rem; padding: 3px 10px;
+      border-radius: 20px; font-weight: 500;
+    }
+    .pill-blended    { background: #e8f0fe; color: #3a56d4; }
+    .pill-cosine     { background: #e6f4ea; color: #2e7d32; }
+    .pill-click      { background: #fff3e0; color: #e65100; }
+    .pill-popularity { background: #fce4ec; color: #c62828; }
+    .pill-year       { background: #f3e5f5; color: #6a1b9a; }
+ 
+    .open-btn {
+      margin-left: auto; padding: 5px 14px;
+      background: #4f6ef7; color: white; border: none;
+      border-radius: 6px; font-size: 0.8rem; cursor: pointer;
+      text-decoration: none; display: inline-block;
+      transition: background 0.15s;
+    }
+    .open-btn:hover { background: #3a56d4; }
+ 
+    #loading { text-align: center; padding: 40px; color: #888; display: none; }
+ 
+    .tooltip-wrap { position: relative; display: inline-block; }
+    .tooltip-wrap .tip {
+      visibility: hidden; background: #1a1a2e; color: white;
+      font-size: 0.75rem; padding: 6px 10px; border-radius: 6px;
+      position: absolute; bottom: 130%; left: 50%; transform: translateX(-50%);
+      white-space: nowrap; z-index: 10; opacity: 0; transition: opacity 0.2s;
+    }
+    .tooltip-wrap:hover .tip { visibility: visible; opacity: 1; }
+  </style>
+</head>
+<body>
+ 
+<header>
+  <h1>🔍 Method-Aware Search Engine</h1>
+  <p>CS Research Papers &nbsp;·&nbsp; POS-weighted TF-IDF &nbsp;·&nbsp; Click-through Re-ranking</p>
+</header>
+ 
+<div class="search-bar">
+  <input type="text" id="query" placeholder="e.g. graph neural network node classification" />
+ 
+  <select id="sort" onchange="onSortChange()">
+    <option value="blended">⚖️ Blended (default)</option>
+    <option value="relevance">🎯 Relevance only</option>
+    <option value="trending">🔥 Trending</option>
+    <option value="popularity">👆 Most clicked</option>
+    <option value="newest">🆕 Newest first</option>
+    <option value="oldest">📚 Oldest first</option>
+  </select>
+ 
+  <select id="topk">
+    <option value="5">5 results</option>
+    <option value="10" selected>10 results</option>
+    <option value="20">20 results</option>
+  </select>
+ 
+  <button onclick="runSearch()">Search</button>
+</div>
+ 
+<div class="main">
+  <div id="sort-legend" class="sort-legend" style="display:none"></div>
+  <div id="status"></div>
+  <div id="loading">Searching...</div>
+  <div id="results"></div>
+</div>
+ 
+<script>
+  const SORT_INFO = {
+    blended:    { label: 'Blended (default)',  desc: 'Combines cosine similarity (0.7x) with your query-specific click history (0.3x). Learns from what users clicked for this exact query — starts purely mathematical, improves over time.' },
+    relevance:  { label: 'Relevance only',     desc: 'Pure cosine similarity between your query vector and document vectors. No click influence. Best for unbiased retrieval or first-time queries with no click history.' },
+    trending:   { label: 'Trending',           desc: 'Combines cosine similarity (0.6x) with global click popularity across all queries (0.4x). Surfaces papers that are both relevant and widely accessed by other users.' },
+    popularity: { label: 'Most clicked',       desc: 'Among relevant results, sorts by how many times each paper has been clicked across all queries.' },
+    newest:     { label: 'Newest first',       desc: 'Among relevant results, sorts by publication year descending. Useful for finding recent work.' },
+    oldest:     { label: 'Oldest first',       desc: 'Among relevant results, sorts by publication year ascending. Ideal for literature reviews — surfaces foundational papers first.' },
+  };
+
+  let currentQuery = '';
+
+  document.getElementById('query').addEventListener('keydown', e => {
+    if (e.key === 'Enter') runSearch();
+  });
+
+  function onSortChange() {
+    updateLegend();
+    if (currentQuery) runSearch();
+  }
+
+  function updateLegend() {
+    const sort   = document.getElementById('sort').value;
+    const legend = document.getElementById('sort-legend');
+    const info   = SORT_INFO[sort];
+    legend.style.display = 'block';
+    legend.innerHTML = '<strong>' + info.label + ':</strong> ' + info.desc;
+  }
+
+  async function runSearch() {
+    const query = document.getElementById('query').value.trim();
+    const sort  = document.getElementById('sort').value;
+    const topk  = document.getElementById('topk').value;
+    if (!query) return;
+
+    currentQuery = query;
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('results').innerHTML = '';
+    document.getElementById('status').textContent = '';
+    updateLegend();
+
+    const res  = await fetch('/search?q=' + encodeURIComponent(query) + '&sort=' + sort + '&k=' + topk);
+    const data = await res.json();
+
+    document.getElementById('loading').style.display = 'none';
+
+    if (!data.length) {
+      document.getElementById('status').textContent = 'No results found. Try different keywords.';
+      return;
+    }
+
+    document.getElementById('status').innerHTML =
+      '<strong>' + data.length + ' results</strong> for "<em>' + query + '</em>"';
+
+    const container = document.getElementById('results');
+
+    data.forEach(function(r) {
+      const card   = document.createElement('div');
+      card.className = 'result-card';
+      const safeId = r.id.replace('.', '_');
+
+      card.innerHTML =
+        '<div class="result-header">' +
+          '<div class="rank-badge">' + r.rank + '</div>' +
+          '<div class="title-block">' +
+            '<a class="result-title" id="title-' + safeId + '" href="' + r.url + '" target="_blank" onclick="recordClick(\'' + r.id + '\')">' + r.title + '</a>' +
+            '<a class="arxiv-link" href="' + r.url + '" target="_blank">arXiv:' + r.arxiv_id + ' &#8599;</a>' +
+          '</div>' +
+        '</div>' +
+        '<p class="result-abstract">' + r.abstract + '</p>' +
+        '<div class="scores">' +
+          '<span class="score-pill pill-blended">Blended: ' + r.blended_score + '</span>' +
+          '<span class="score-pill pill-cosine">Cosine: ' + r.cosine_score + '</span>' +
+          '<span class="score-pill pill-click">Clicks (query): ' + r.click_count + '</span>' +
+          '<span class="score-pill pill-popularity">Clicks (global): ' + r.global_count + '</span>' +
+          '<span class="score-pill pill-year">' + r.year + '</span>' +
+          '<button class="open-btn" onclick="openPaper(\'' + r.id + '\', \'' + r.url + '\')">Open paper &#8599;</button>' +
+        '</div>';
+
+      container.appendChild(card);
+    }); // <-- forEach closes here
+
+  } // <-- runSearch closes here
+
+  // Single click recorder — called once per user action
+  async function recordClick(docId) {
+    const safeId = docId.replace('.', '_');
+    const btn = document.getElementById('title-' + safeId);
+    if (btn) btn.classList.add('clicked');
+    await fetch('/click', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ query: currentQuery, doc_id: docId })
+    });
+  }
+
+  // Opens paper AND records click — used by the Open button only
+  function openPaper(docId, url) {
+    recordClick(docId);
+    window.open(url, '_blank');
+  }
+
+</script>
+ 
+</body>
+</html>
