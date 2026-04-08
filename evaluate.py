@@ -1,5 +1,5 @@
 # =============================================================================
-# evaluate.py — Cranfield Evaluation: TF-IDF cosine vs BM25 baseline
+# evaluate.py — Cranfield Evaluation: basic TF-IDF vs POS-weighted TF-IDF vs BM25
 # =============================================================================
 
 import os
@@ -36,34 +36,11 @@ _stemmer = PorterStemmer()
 
 def _preprocess(text: str) -> str:
     text = text.lower()
-    text = re.sub(r"[^\\w\\s\\-]", "", text)
-    text = re.sub(r"\\d+", "", text)
+    text = re.sub(r"[^\w\s-]", "", text)
+    text = re.sub(r"\d+", "", text)
     tokens = word_tokenize(text)
     tokens = [t for t in tokens if t not in _stop_words and t.strip()]
     return " ".join(_stemmer.stem(t) for t in tokens)
-
-
-print("Loading artifacts...")
-with open(f"{BASE}/vectorizer.pkl", "rb") as f:
-    vectorizer = pickle.load(f)
-with open(f"{BASE}/pos_weight_vector.pkl", "rb") as f:
-    pos_weight_vector = pickle.load(f)
-with open(f"{BASE}/doc_ids.pkl", "rb") as f:
-    doc_ids = pickle.load(f)
-with open(f"{BASE}/doc_titles.pkl", "rb") as f:
-    doc_titles = pickle.load(f)
-with open(f"{BASE}/doc_abstracts.pkl", "rb") as f:
-    doc_abstracts = pickle.load(f)
-tfidf_pos_matrix = sp.load_npz(f"{BASE}/tfidf_pos_matrix.npz")
-pos_weight_diag = sp.diags(pos_weight_vector)
-print(f"Loaded {len(doc_ids):,} documents")
-
-print("Preprocessing corpus for BM25...")
-combined_texts = [
-    str(doc_titles[i]) * 2 + " " + str(doc_abstracts[i])
-    for i in range(len(doc_ids))
-]
-tokenised_docs = [_preprocess(t).split() for t in combined_texts]
 
 
 def load_qrels(path: str) -> dict:
@@ -158,7 +135,17 @@ def evaluate_run(ranked_results: dict, qrels_data: dict, k: int = 10) -> dict:
     return {"rows": rows, "means": means}
 
 
-def run_tfidf(queries: dict, k: int = 10) -> dict:
+def run_tfidf_base(queries: dict, vectorizer, tfidf_base_matrix, doc_ids: list, k: int = 10) -> dict:
+    results = {}
+    for qid, q in queries.items():
+        qv = vectorizer.transform([_preprocess(q)])
+        sco = cosine_similarity(qv, tfidf_base_matrix).flatten()
+        top = sco.argsort()[::-1][:k]
+        results[qid] = [str(doc_ids[i]) for i in top]
+    return results
+
+
+def run_tfidf_pos(queries: dict, vectorizer, tfidf_pos_matrix, pos_weight_diag, doc_ids: list, k: int = 10) -> dict:
     results = {}
     for qid, q in queries.items():
         qv = vectorizer.transform([_preprocess(q)]).dot(pos_weight_diag)
@@ -168,7 +155,7 @@ def run_tfidf(queries: dict, k: int = 10) -> dict:
     return results
 
 
-def run_bm25(queries: dict, k: int = 10) -> dict:
+def run_bm25(queries: dict, tokenised_docs: list, doc_ids: list, k: int = 10) -> dict:
     from rank_bm25 import BM25Okapi
 
     bm25 = BM25Okapi(tokenised_docs)
@@ -195,30 +182,56 @@ def print_table(label: str, eval_data: dict, metrics: list) -> None:
 
 
 if __name__ == "__main__":
+    print("Loading artifacts...")
+    with open(f"{BASE}/vectorizer.pkl", "rb") as f:
+        vectorizer = pickle.load(f)
+    with open(f"{BASE}/pos_weight_vector.pkl", "rb") as f:
+        pos_weight_vector = pickle.load(f)
+    with open(f"{BASE}/doc_ids.pkl", "rb") as f:
+        doc_ids = pickle.load(f)
+    with open(f"{BASE}/doc_titles.pkl", "rb") as f:
+        doc_titles = pickle.load(f)
+    with open(f"{BASE}/doc_abstracts.pkl", "rb") as f:
+        doc_abstracts = pickle.load(f)
+    tfidf_base_matrix = sp.load_npz(f"{BASE}/tfidf_base_matrix.npz")
+    tfidf_pos_matrix = sp.load_npz(f"{BASE}/tfidf_pos_matrix.npz")
+    pos_weight_diag = sp.diags(pos_weight_vector)
+    print(f"Loaded {len(doc_ids):,} documents")
+
     qrels = load_qrels(f"{BASE}/qrels.tsv")
+    matched, total = validate_qrels_alignment(qrels, doc_ids)
+    print(f"Qrels alignment: {matched}/{total} doc IDs found in corpus")
+
+    print("Preprocessing corpus for BM25...")
+    combined_texts = [
+        str(doc_titles[i]) * 2 + " " + str(doc_abstracts[i])
+        for i in range(len(doc_ids))
+    ]
+    tokenised_docs = [_preprocess(t).split() for t in combined_texts]
+
     metrics = ["P@5", "P@10", "Recall@10", "AP", "RR", "NDCG@10"]
 
-    matched, total = validate_qrels_alignment(qrels, doc_ids)
-    print(f"Qrels doc-id alignment: {matched}/{total} IDs found in runtime artifacts")
+    print("\nRunning basic TF-IDF (no POS weighting)...")
+    base_results = run_tfidf_base(QUERIES, vectorizer, tfidf_base_matrix, doc_ids, k=TOP_K)
+    base_eval = evaluate_run(base_results, qrels)
 
-    print("\nRunning TF-IDF cosine...")
-    tfidf_results = run_tfidf(QUERIES, k=TOP_K)
-    tfidf_eval = evaluate_run(tfidf_results, qrels)
+    print("Running POS-weighted TF-IDF...")
+    pos_results = run_tfidf_pos(QUERIES, vectorizer, tfidf_pos_matrix, pos_weight_diag, doc_ids, k=TOP_K)
+    pos_eval = evaluate_run(pos_results, qrels)
 
     print("Running BM25...")
-    bm25_results = run_bm25(QUERIES, k=TOP_K)
+    bm25_results = run_bm25(QUERIES, tokenised_docs, doc_ids, k=TOP_K)
     bm25_eval = evaluate_run(bm25_results, qrels)
 
-    print_table("TF-IDF Cosine (POS-weighted)", tfidf_eval, metrics)
+    print_table("Basic TF-IDF (no POS weighting)", base_eval, metrics)
+    print_table("POS-weighted TF-IDF", pos_eval, metrics)
     print_table("BM25 (rank-bm25, Okapi)", bm25_eval, metrics)
 
-    tfidf_means = tfidf_eval["means"]
-    bm25_means = bm25_eval["means"]
-
-    print("\n=== Summary: TF-IDF vs BM25 ===")
-    print(f"{'Metric':<14} {'TF-IDF':>10} {'BM25':>10} {'Delta':>10}")
-    print("-" * 46)
+    print("\n=== Summary: Three-System Comparison ===")
+    print(f"{'Metric':<14} {'TF-IDF Base':>14} {'TF-IDF POS':>14} {'BM25':>10}")
+    print("-" * 54)
     for metric in metrics:
-        tv = tfidf_means[metric]
-        bv = bm25_means[metric]
-        print(f"{metric:<14} {tv:>10.4f} {bv:>10.4f} {bv - tv:>+10.4f}")
+        bv = base_eval["means"][metric]
+        pv = pos_eval["means"][metric]
+        mv = bm25_eval["means"][metric]
+        print(f"{metric:<14} {bv:>14.4f} {pv:>14.4f} {mv:>10.4f}")
