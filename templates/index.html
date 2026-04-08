@@ -250,6 +250,27 @@
       color: #6a1b9a;
     }
 
+    .pill-term {
+      background: #e8eaf6;
+      color: #283593;
+    }
+
+    .terms-row {
+      margin: 6px 0 0 46px;
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      align-items: center;
+      font-size: 0.74rem;
+      color: #888;
+    }
+
+    .terms-label {
+      font-size: 0.72rem;
+      color: #aaa;
+      font-style: italic;
+    }
+
     .open-btn {
       margin-left: auto;
       padding: 5px 14px;
@@ -458,7 +479,8 @@
           '<span class="score-pill pill-popularity">Clicks (global): ' + r.global_count + '</span>' +
           '<span class="score-pill pill-year">' + r.year + '</span>' +
           '<button class="open-btn" onclick="openPaper(\'' + r.id + '\', \'' + r.url + '\')">Open paper &#8599;</button>' +
-          '</div>';
+          '</div>' +
+          (r.top_terms && r.top_terms.length ? '<div class="terms-row"><span class="terms-label">matched terms:</span>' + r.top_terms.map(function(t){ return '<span class="score-pill pill-term">' + t + '</span>'; }).join('') + '</div>' : '');
 
         container.appendChild(card);
       }); // <-- forEach closes here

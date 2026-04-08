@@ -220,6 +220,7 @@ print("Loading index...")
 
 stop_words = set(stopwords.words('english'))
 stemmer    = PorterStemmer()
+feature_names = vectorizer.get_feature_names_out()  # vocabulary aligned to matrix columns
 print(f"Index loaded — {len(doc_ids)} documents ready")
 
 # Cache conservative WordNet expansions by token to avoid repeated lookups.
@@ -346,6 +347,32 @@ def _get_global_popularity(doc_id: float) -> float:
 
 
 # =============================================================================
+# Explainability helper
+# =============================================================================
+
+def _top_terms_for(doc_idx: int, nonzero_cols: np.ndarray, query_vec_array: np.ndarray) -> list[str]:
+    """Return the top _TOP_TERMS_K vocabulary terms that contributed most to
+    the cosine score between the query and document at *doc_idx*.
+
+    Method: for each non-zero query column, multiply the query weight by the
+    document's TF-IDF weight for that term. The top-scoring terms are the
+    ones that drove the match.
+    """
+    if len(nonzero_cols) == 0:
+        return []
+
+    doc_row = np.asarray(tfidf_pos_matrix[doc_idx, :][:, nonzero_cols].todense()).flatten()
+    contributions = query_vec_array[nonzero_cols] * doc_row
+
+    max_contrib = float(contributions.max())
+    if max_contrib <= 0:
+        return []
+
+    top_local = contributions.argsort()[::-1][:_TOP_TERMS_K]
+    return [str(feature_names[nonzero_cols[i]]) for i in top_local if contributions[i] > 0]
+
+
+# =============================================================================
 # Search
 # =============================================================================
 
@@ -353,8 +380,11 @@ def _get_global_popularity(doc_id: float) -> float:
 _REQUIRED_FIELDS = {
     'rank', 'id', 'arxiv_id', 'url', 'title', 'abstract',
     'cosine_score', 'click_score', 'blended_score',
-    'popularity', 'year', 'click_count', 'global_count',
+    'popularity', 'year', 'click_count', 'global_count', 'top_terms',
 }
+
+# Number of top matching terms to return per result for explainability display
+_TOP_TERMS_K = 5
 
 # Blending weight: final_score = ALPHA * cosine + (1 - ALPHA) * click_score
 # 0.7 keeps retrieval quality dominant while letting click history influence
@@ -455,6 +485,12 @@ def search(
 
     q_key       = _normalise_query(query)
 
+    # Pre-compute query contribution vector once — element-wise product of the
+    # POS-weighted query vector and each document row gives the per-term score.
+    # We extract the non-zero query column indices so the inner loop is fast.
+    query_vec_array = np.asarray(query_vec_pos.todense()).flatten()
+    nonzero_cols = np.where(query_vec_array > 0)[0]
+
     results = []
     for rank, idx in enumerate(top_indices, 1):
         doc_id   = doc_ids[idx]
@@ -474,6 +510,7 @@ def search(
             'year':          int(doc_years[idx]),
             'click_count':   int(click_store[q_key].get(float(doc_id), 0)),
             'global_count':  int(global_clicks.get(float(doc_id), 0)),
+            'top_terms':     _top_terms_for(idx, nonzero_cols, query_vec_array),
         }
 
         missing = _REQUIRED_FIELDS.difference(row.keys())
