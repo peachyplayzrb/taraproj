@@ -4,6 +4,7 @@ Format
 - BL-### | Status | Priority | Task | Evidence/Notes
 
 Items
+- BL-021 | open | medium | Run the new structured notebook end-to-end in Colab and verify artifact/result parity with the current notebook. | Execute search_engine_pipeline_v2.ipynb from a clean kernel, confirm exact runtime artifact names/length alignment, and compare representative search/evaluation outputs against Untitled4 (8).ipynb before adopting it as the primary build notebook.
 - BL-001 | open | high | Keep runtime stable while using new control layer for future edits. | No runtime files changed in this setup pass.
 - BL-002 | open | medium | Use .github/prompts/auto-implement.prompt.md for next implementation handoff. | Confirms consistent task framing.
 - BL-003 | done | high | Run customization validator and fix any frontmatter/schema issues before first large handoff. | Script run passed: school_docs/files/validate_customization.py
